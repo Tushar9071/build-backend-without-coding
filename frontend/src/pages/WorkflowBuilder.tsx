@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { ReactFlow, Controls, Background, useNodesState, useEdgesState, addEdge, type Connection, type Node, type Edge, ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '../store/workflowStore';
-import { Save, Play, X, Terminal, Loader2, CheckCircle2, AlertTriangle, Undo, Redo } from 'lucide-react';
+import { Save, Play, X, Terminal, Loader2, CheckCircle2, AlertTriangle, Undo, Redo, Github } from 'lucide-react';
 import { ApiNode } from '../components/nodes/ApiNode';
 import { FunctionNode } from '../components/nodes/FunctionNode';
 import { LogicNode } from '../components/nodes/LogicNode';
@@ -14,6 +14,7 @@ import { LoopNode } from '../components/nodes/LoopNode';
 import { MathNode } from '../components/nodes/MathNode';
 import { DataNode } from '../components/nodes/DataNode';
 import { NodesToolbar } from '../components/ui/NodesToolbar';
+import { DeployModal } from '../components/ui/DeployModal';
 import { toast } from 'react-hot-toast';
 import useUndoRedo from '../hooks/useUndoRedo'; // We will create this hook
 
@@ -28,6 +29,7 @@ function Flow() {
 
   // Run Modal State
   const [isRunModalOpen, setIsRunModalOpen] = useState(false);
+  const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
   const [inputJson, setInputJson] = useState('{\n  "key": "value"\n}');
   const [isRunning, setIsRunning] = useState(false);
   const [executionResult, setExecutionResult] = useState<any>(null);
@@ -225,6 +227,14 @@ function Flow() {
           </div>
 
           <button
+            onClick={() => setIsDeployModalOpen(true)}
+            className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2 rounded-lg text-sm transition-colors border border-slate-700"
+          >
+            <Github className="w-4 h-4 text-white" />
+            Deploy
+          </button>
+
+          <button
             onClick={() => setIsRunModalOpen(true)}
             className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2 rounded-lg text-sm transition-colors border border-slate-700"
           >
@@ -278,6 +288,12 @@ function Flow() {
           <Controls className="bg-slate-800 border-slate-700 fill-white" />
         </ReactFlow>
       </div>
+
+      <DeployModal 
+        isOpen={isDeployModalOpen} 
+        onClose={() => setIsDeployModalOpen(false)} 
+        workflowId={id || ''} 
+      />
 
       {/* Run Modal */}
       {isRunModalOpen && (

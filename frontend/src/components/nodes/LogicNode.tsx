@@ -1,31 +1,24 @@
 import { Handle, Position } from '@xyflow/react';
-import { GitFork, AlertCircle, Trash2, Database } from 'lucide-react';
+import { GitFork, AlertCircle, Trash2, Maximize2, Minimize2 } from 'lucide-react';
 import { useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { useWorkflowVariables } from '../../hooks/useWorkflowVariables';
+import { SuggestionInput } from '../ui/SuggestionInput';
 
 export function LogicNode({ id, data }: { id: string, data: any }) {
     const { deleteElements } = useReactFlow();
-    const variables = useWorkflowVariables();
 
     const handleDelete = () => {
         deleteElements({ nodes: [{ id }] });
     };
     const [condition, setCondition] = useState(data.condition || 'x > 0');
 
-    const insertVariable = (varName: string) => {
-        // For logic expressions in python/js, we often use the variable name directly without braces 
-        // IF the engine supports it in the local scope.
-        // However, our backend run logic handles substitutions or scope.
-        // Let's assume we want to insert 'myVar'.
-        // If the user wants specific syntax, they can type it, but 'myVar' is a safe default for expression evaluation contexts.
-        const syntax = ` ${varName} `;
-        setCondition((prev: any) => prev + syntax);
-        data.condition = condition + syntax;
-    };
+    const [expanded, setExpanded] = useState(false);
 
     return (
-        <div className="bg-slate-900 border-2 border-slate-700 hover:border-yellow-500 rounded-xl min-w-[280px] shadow-xl transition-all group">
+        <div
+            onDoubleClick={() => setExpanded(!expanded)}
+            className={`bg-slate-900 border-2 border-slate-700 hover:border-yellow-500 rounded-xl shadow-xl transition-all group ${expanded ? 'min-w-[280px]' : 'min-w-[200px]'}`}
+        >
 
             {/* Input Handle */}
             <Handle
@@ -42,55 +35,46 @@ export function LogicNode({ id, data }: { id: string, data: any }) {
                     </div>
                     <span className="font-semibold text-white text-sm">Condition (If/Else)</span>
                 </div>
-                <button
-                    onClick={handleDelete}
-                    className="text-slate-500 hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-800"
-                >
-                    <Trash2 className="w-4 h-4" />
-                </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-4 space-y-3">
-                <div className="bg-yellow-500/5 p-3 rounded-lg border border-yellow-500/10 flex gap-3">
-                    <AlertCircle className="w-4 h-4 text-yellow-500 mt-0.5" />
-                    <p className="text-[10px] text-yellow-200/70 leading-relaxed">
-                        Evaluates the expression below. If true, flow continues to green output. If false, red output.
-                    </p>
-                </div>
-
-                <div>
-                    <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Expression</label>
-                    <input
-                        type="text"
-                        value={condition}
-                        onChange={(e) => {
-                            setCondition(e.target.value);
-                            data.condition = e.target.value;
-                        }}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-yellow-500 transition-colors mb-2"
-                        placeholder="myVar > 10"
-                    />
-
-                    {/* Variable Suggestions */}
-                    {variables.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                            <span className="text-[10px] text-slate-600 mr-1 pt-0.5">Insert:</span>
-                            {variables.map(v => (
-                                <button
-                                    key={v.id}
-                                    onClick={() => insertVariable(v.name)}
-                                    className="px-1.5 py-0.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 rounded text-[10px] font-mono transition-colors flex items-center gap-1"
-                                    title={`Type: ${v.type}`}
-                                >
-                                    <Database className="w-2.5 h-2.5" />
-                                    {v.name}
-                                </button>
-                            ))}
-                        </div>
-                    )}
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={() => setExpanded(!expanded)}
+                        className="text-slate-500 hover:text-white transition-colors p-1"
+                    >
+                        {expanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                    </button>
+                    <button
+                        onClick={handleDelete}
+                        className="text-slate-500 hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-800"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
                 </div>
             </div>
+
+            {expanded && (
+                <div className="p-4 space-y-3">
+                    <div className="bg-yellow-500/5 p-3 rounded-lg border border-yellow-500/10 flex gap-3">
+                        <AlertCircle className="w-4 h-4 text-yellow-500 mt-0.5" />
+                        <p className="text-[10px] text-yellow-200/70 leading-relaxed">
+                            Evaluates the expression below. If true, flow continues to green output. If false, red output.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Expression</label>
+                        <SuggestionInput
+                            nodeId={id}
+                            value={condition}
+                            onValueChange={(val) => {
+                                setCondition(val);
+                                data.condition = val;
+                            }}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-yellow-500 transition-colors mb-2"
+                            placeholder="myVar > 10"
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* Outputs */}
             <div className="flex justify-between px-4 pb-4">

@@ -30,10 +30,15 @@ class WorkflowExecutor:
                 
         # Find start node (API Node)
         start_node = None
-        for node_id, node in self.nodes.items():
-            if node['type'] == 'api':
-                start_node = node
-                break
+        start_node_id = input_data.get('start_node_id')
+        
+        if start_node_id and start_node_id in self.nodes:
+             start_node = self.nodes[start_node_id]
+        else:
+            for node_id, node in self.nodes.items():
+                if node['type'] == 'api':
+                    start_node = node
+                    break
         
         if not start_node:
             print("No API Entry found")
@@ -141,30 +146,135 @@ class WorkflowExecutor:
         }
 
     def _resolve_val(self, val):
-        """Helper to substitute variables in a string or return the specific object from context if exact match."""
+        """Helper to substitute variables in a string (supporting $var or {var}) or return the specific object from context if exact match."""
         if not isinstance(val, str):
             return val
         
-        # Exact match (preserve type)
+        # 1. Exact Match Check (Preserves Type)
+        # Check {key}
         if val.startswith('{') and val.endswith('}') and val.count('{') == 1:
             key = val[1:-1]
             return self.context.get(key, val)
+        # Check $key
+        if val.startswith('$') and ' ' not in val and len(val) > 1:
+            key = val[1:]
+            # Ensure it's not part of a string like "$100" unless it's a known var?
+            # User wants $variable syntax. If $variable is in context, return it.
+            if key in self.context:
+                return self.context[key]
         
-        # Interpolation
+        # 2. String Interpolation
+        # Replace {key}
         if '{' in val and '}' in val:
             for k, v in self.context.items():
                 if f"{{{k}}}" in val:
                     val = val.replace(f"{{{k}}}", str(v))
-            return val
         
+        # Replace $key
+        # We need to be careful not to replace $money if it's not a var.
+        # Simple approach: iterate keys and replace $key with value.
+        # Better approach: Regex, but simplistic loop works for now if keys are distinct.
+        if '$' in val:
+             for k, v in self.context.items():
+                 # We sort keys by length desc to avoid partial replacement collision? 
+                 # (e.g. $var vs $variable) - Python dict iteration order is insertion based (usually).
+                 placeholder = f"${k}"
+                 if placeholder in val:
+                     val = val.replace(placeholder, str(v))
+            
         return val
+
+    def _validate_schema(self, fields: List[Dict[str, Any]], target_data: Any) -> tuple[List[str], List[str]]:
+        def recursive_validate(schema_fields, current_data, path="root"):
+            missing_errs = []
+            invalid_errs = []
+            
+            # Check 1: Must be object if it has fields to validate
+            if not isinstance(current_data, dict):
+                # If we are validating query/params, they might be empty regular dicts, which is fine.
+                # If body, it might be None or list.
+                if current_data is None:
+                    current_data = {} 
+                else:
+                    invalid_errs.append(f"{path} (expected object, got {type(current_data).__name__})")
+                    return missing_errs, invalid_errs
+
+            for field in schema_fields:
+                name = field.get('name')
+                if not name: continue
+                
+                required = field.get('required', False)
+                f_type = field.get('type', 'string')
+                children = field.get('children', [])
+                
+                current_path = f"{path}.{name}" if path != "root" else name
+                
+                # Missing Check
+                if name not in current_data:
+                    if required:
+                        missing_errs.append(current_path)
+                    continue
+                
+                val = current_data[name]
+                
+                # Type Check
+                if f_type == 'string' and not isinstance(val, str):
+                    invalid_errs.append(f"{current_path} (expected string)")
+                elif f_type == 'number' and not isinstance(val, (int, float)):
+                    invalid_errs.append(f"{current_path} (expected number)")
+                elif f_type == 'boolean' and not isinstance(val, bool):
+                    invalid_errs.append(f"{current_path} (expected boolean)")
+                elif f_type == 'array' and not isinstance(val, list):
+                    invalid_errs.append(f"{current_path} (expected array)")
+                elif f_type == 'object':
+                    if not isinstance(val, dict):
+                            invalid_errs.append(f"{current_path} (expected object)")
+                    else:
+                            # Recursive Validation for Nested Objects
+                            if children:
+                                c_missing, c_invalid = recursive_validate(children, val, current_path)
+                                missing_errs.extend(c_missing)
+                                invalid_errs.extend(c_invalid)
+
+            return missing_errs, invalid_errs
+
+        return recursive_validate(fields, target_data)
 
     def execute_node(self, node: Dict[str, Any]):
         node_type = node['type']
         data = node.get('data', {})
 
         if node_type == 'api':
-            pass
+            # Check for inline Body Validation
+            validation_fields = data.get('validationFields', [])
+            if validation_fields:
+                method = data.get('method', 'GET')
+                # Only validate body for unsafe methods usually, but let's just stick to what's defined.
+                # If fields exist, we validate body.
+                body_data = self.context.get('body', {})
+                
+                missing, invalid_types = self._validate_schema(validation_fields, body_data)
+                
+                if missing or invalid_types:
+                    error_msg = "Validation Error: "
+                    if missing:
+                        error_msg += f"Missing fields: {', '.join(missing)}. "
+                    if invalid_types:
+                        error_msg += f"Invalid types: {', '.join(invalid_types)}."
+                    
+                    self.execution_log.append(f"API Body Validation Failed: {error_msg}")
+                    return {
+                        "type": "response", 
+                        "data": {
+                            "error": "Bad Request", 
+                            "message": error_msg.strip(),
+                            "details": {
+                                "missing": missing,
+                                "invalid": invalid_types
+                            }
+                        }
+                    }
+                self.execution_log.append("API Body Validation Passed")
         
         elif node_type == 'variable':
             # Variable Node Execution (Init or Update)
@@ -176,17 +286,26 @@ class WorkflowExecutor:
                 # 1. Perform Variable Substitution if value is a string
                 # This allows "Set Variable" to take values from previous nodes e.g. "{body.id}"
                 if isinstance(var_value, str):
-                    # Check for single variable replacement like "{myObj}" to preserve type
+                    # Check for single variable replacement like "{myObj}" or "$myObj" to preserve type
                     if var_value.startswith('{') and var_value.endswith('}') and var_value.count('{') == 1:
                         key = var_value[1:-1]
+                        if key in self.context:
+                            var_value = self.context[key]
+                    elif var_value.startswith('$') and ' ' not in var_value and len(var_value) > 1:
+                        key = var_value[1:]
                         if key in self.context:
                             var_value = self.context[key]
                     else:
                         # Mixed string interpolation
                         for key, val in self.context.items():
+                            # Replace {key}
                             placeholder = f"{{{key}}}"
                             if placeholder in var_value:
                                 var_value = var_value.replace(placeholder, str(val))
+                            # Replace $key
+                            placeholder_d = f"${key}"
+                            if placeholder_d in var_value:
+                                var_value = var_value.replace(placeholder_d, str(val))
                 
                 # 2. Type parsing for JSON/Array
                 if var_type in ['json', 'array'] and isinstance(var_value, str):
@@ -208,6 +327,13 @@ class WorkflowExecutor:
             # Simple sanitization/conversion for Python eval
             # Replace === with ==
             condition = raw_condition.replace('===', '==').replace('!==', '!=')
+            
+            # Remove $ prefix from variables for python eval context
+            # e.g. $valA > 10 -> valA > 10
+            # We use regex to find $ followed by word characters
+            import re
+            # Replace $word with word
+            condition = re.sub(r'\$([a-zA-Z_]\w*)', r'\1', condition)
             
             try:
                 # We pass 'self.context' as locals so variables are directly accessible by name
@@ -303,38 +429,17 @@ class WorkflowExecutor:
         elif node_type == 'interface':
             # Schema Validation for Request Body
             fields = data.get('fields', [])
-            body = self.context.get('body', {})
+            mode = data.get('transferMode', 'body')
             
-            missing = []
-            invalid_types = []
+            target_data = {}
+            if mode == 'query':
+                target_data = self.context.get('query', {})
+            elif mode == 'params':
+                target_data = self.context.get('params', {})
+            else:
+                target_data = self.context.get('body', {})
             
-            for field in fields:
-                name = field.get('name')
-                required = field.get('required', False)
-                f_type = field.get('type', 'string')
-                
-                if not name:
-                    continue
-                
-                if required and name not in body:
-                    missing.append(name)
-                    continue
-                
-                # Type Check (Optional but good)
-                if name in body:
-                    val = body[name]
-                    if f_type == 'string' and not isinstance(val, str):
-                        invalid_types.append(f"{name} (expected string)")
-                    elif f_type == 'number' and not isinstance(val, (int, float)):
-                         # Try parsing if it's a string number? No, strict usually.
-                         # But let's be loose if it's a digit string? No, API usually strict.
-                        invalid_types.append(f"{name} (expected number)")
-                    elif f_type == 'boolean' and not isinstance(val, bool):
-                        invalid_types.append(f"{name} (expected boolean)")
-                    elif f_type == 'object' and not isinstance(val, dict):
-                         invalid_types.append(f"{name} (expected object)")
-                    elif f_type == 'array' and not isinstance(val, list):
-                         invalid_types.append(f"{name} (expected array)")
+            missing, invalid_types = self._validate_schema(fields, target_data)
 
             if missing or invalid_types:
                 error_msg = "Validation Error: "
@@ -431,54 +536,85 @@ class WorkflowExecutor:
                 return {"type": "response", "data": val}
             else:
                 try:
-                    # Recursive substitution function for nested dicts/lists
-                    def substitute(obj):
-                        if isinstance(obj, str):
-                            # Check for straightforward single variable replacement like "{myObj}"
-                            # to preserve the type (e.g. if myObj is a dict, return dict, not string representation)
-                            if obj.startswith('{') and obj.endswith('}') and obj.count('{') == 1:
-                                key = obj[1:-1]
-                                if key in self.context:
-                                    return self.context[key]
-                            
-                            # String interpolation for mixed content "Value is {val}"
-                            for key, val in self.context.items():
-                                placeholder = f"{{{key}}}"
-                                if placeholder in obj:
-                                     # Basic string replace
-                                     if isinstance(val, (dict, list)):
-                                         obj = obj.replace(placeholder, json.dumps(val))
-                                     else:
-                                         obj = obj.replace(placeholder, str(val))
-                            return obj
-                        elif isinstance(obj, dict):
-                            return {k: substitute(v) for k, v in obj.items()}
-                        elif isinstance(obj, list):
-                            return [substitute(i) for i in obj]
-                        return obj
+                    import re
+                    
+                    # Helper to resolve deep paths like "body.user.email"
+                    def get_value_from_path(path_str, context):
+                        parts = path_str.split('.')
+                        curr = context
+                        for p in parts:
+                            if isinstance(curr, dict) and p in curr:
+                                curr = curr[p]
+                            elif isinstance(curr, list) and p.isdigit():
+                                idx = int(p)
+                                if 0 <= idx < len(curr):
+                                    curr = curr[idx]
+                                else:
+                                    return None
+                            else:
+                                return None
+                        return curr
 
-                    # First try to parse the JSON skeleton
-                    # Then substitute values inside
-                    # OR substitute string first then parse? 
-                    # Substituting string first is risky for quotes.
-                    # BUt user inputs string.
-                    
-                    # Let's try naïve string sub first as before, but improved.
                     final_body = body_def
-                    for key, val in self.context.items():
-                        placeholder = f"{{{key}}}"
-                        if placeholder in final_body:
-                             if isinstance(val, (int, float, bool)):
-                                 final_body = final_body.replace(placeholder, str(val).lower() if isinstance(val, bool) else str(val))
-                             elif isinstance(val, (dict, list)):
-                                 final_body = final_body.replace(placeholder, json.dumps(val))
-                             else:
-                                 # It's a string value. If we just insert it, we might break JSON if it has quotes.
-                                 # e.g. "name": "{name}" -> "name": "tushar" (ok)
-                                 # "name": "{name}" where name='a"b' -> "name": "a"b" (INVALID JSON)
-                                 # Correct way is difficult with pure string replace on raw JSON.
-                                 final_body = final_body.replace(placeholder, str(val))
                     
+                    # Regex to find $variable or $var.prop.nested
+                    # Matches $ followed by word char, then optionally dots and word chars
+                    # We sort matches by length descending to replace longest paths first (not strictly needed with regex but safer)
+                    # But simpler: use re.sub with callback.
+                    
+                    # Regex to find $variable, enclosed $variable, or dot notation
+                    # Matches:
+                    # 1. Optional opening brace \{
+                    # 2. The $ symbol
+                    # 3. The path (word + dots)
+                    # 4. Optional closing brace \}
+                    pattern = r'(\{?)\$([a-zA-Z_][a-zA-Z0-9_.]*)(\}?)'
+                    
+                    def replacer(match):
+                        full_match = match.group(0)
+                        prefix = match.group(1) # {
+                        path = match.group(2)   # var.path
+                        suffix = match.group(3) # }
+                        
+                        # Resolve value
+                        val = self.context.get(path)
+                        if val is None:
+                             val = get_value_from_path(path, self.context)
+                        
+                        if val is None:
+                            # Safely handle missing values
+                            if prefix == '{' and suffix == '}':
+                                # {$var} -> null (valid JSON value)
+                                return "null"
+                            # If $var is bare, we return matches to avoid breaking strings like "Price: $10"
+                            # But if it looks like a variable placeholder that failed, what to do?
+                            # For now, returning full_match preserves behavior for non-variable $ usage.
+                            return full_match
+                            
+                        start = match.start()
+                        end = match.end()
+                        
+                        is_wrapped_in_braces = (prefix == '{' and suffix == '}')
+                        
+                        # Check context in original string for quotes
+                        is_already_quoted = False
+                        if start > 0 and end < len(body_def):
+                            if body_def[start-1] == '"' and body_def[end] == '"':
+                                is_already_quoted = True
+                                
+                        if is_wrapped_in_braces:
+                            return json.dumps(val)
+                            
+                        if is_already_quoted:
+                            s = json.dumps(val)
+                            if s.startswith('"') and s.endswith('"'):
+                                return s[1:-1]
+                            return str(val)
+                        else:
+                            return json.dumps(val)
+
+                    final_body = re.sub(pattern, replacer, final_body)
+
                     return {"type": "response", "data": json.loads(final_body)}
                 except Exception as e:
                     self.execution_log.append(f"Error parsing response body: {e}")

@@ -1,12 +1,14 @@
 import { Handle, Position } from '@xyflow/react';
-import { Send, CheckCircle, AlertTriangle, Trash2, Database } from 'lucide-react';
+import { Send, CheckCircle, AlertTriangle, Trash2, Database, Maximize2, Minimize2 } from 'lucide-react';
 import { useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { useWorkflowVariables } from '../../hooks/useWorkflowVariables';
+import { SuggestionInput } from '../ui/SuggestionInput';
+import { useAvailableVariables } from '../../hooks/useAvailableVariables';
 
 export function ResponseNode({ id, data }: { id: string, data: any }) {
     const { deleteElements } = useReactFlow();
-    const variables = useWorkflowVariables();
+    // Fetch available variables (connected + global)
+    const variables = useAvailableVariables(id);
 
     const handleDelete = () => {
         deleteElements({ nodes: [{ id }] });
@@ -29,14 +31,15 @@ export function ResponseNode({ id, data }: { id: string, data: any }) {
         return 'border-slate-500';
     }
 
-    const insertVariable = (varName: string) => {
-        const syntax = `{${varName}}`;
-        setBody((prev: any) => prev + syntax);
-        data.body = body + syntax;
-    };
+
+
+    const [expanded, setExpanded] = useState(false);
 
     return (
-        <div className={`bg-slate-900 border-2 ${getHeaderColor()} rounded-xl min-w-[280px] shadow-xl transition-all group`}>
+        <div
+            onDoubleClick={() => setExpanded(!expanded)}
+            className={`bg-slate-900 border-2 ${getHeaderColor()} rounded-xl shadow-xl transition-all group ${expanded ? 'min-w-[280px]' : 'min-w-[200px]'}`}
+        >
 
             {/* Input Handle */}
             <Handle
@@ -53,139 +56,136 @@ export function ResponseNode({ id, data }: { id: string, data: any }) {
                     </div>
                     <span className="font-semibold text-white text-sm">Return Response</span>
                 </div>
-                <button
-                    onClick={handleDelete}
-                    className="text-slate-500 hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-800"
-                >
-                    <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={() => setExpanded(!expanded)}
+                        className="text-slate-500 hover:text-white transition-colors p-1"
+                    >
+                        {expanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                    </button>
+                    <button
+                        onClick={handleDelete}
+                        className="text-slate-500 hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-800"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
+                </div>
             </div>
 
-            {/* Body */}
-            <div className="p-4 space-y-3">
+            {expanded && (
+                <div className="p-4 space-y-3">
 
-                {/* Status Code Selector */}
-                <div>
-                    <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Status Code</label>
-                    <div className="flex gap-2">
-                        <input
-                            type="number"
-                            value={statusCode}
-                            onChange={(e) => {
-                                const val = parseInt(e.target.value);
-                                setStatusCode(val);
-                                data.statusCode = val;
-                            }}
-                            className="w-20 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
-                        />
-                        <div className={`flex-1 flex items-center px-3 rounded-lg border text-xs font-medium ${getStatusColor(statusCode)}`}>
-                            {statusCode >= 200 && statusCode < 300 && <CheckCircle className="w-3.5 h-3.5 mr-2" />}
-                            {statusCode >= 400 && <AlertTriangle className="w-3.5 h-3.5 mr-2" />}
-                            <span>
-                                {statusCode === 200 ? 'OK' :
-                                    statusCode === 201 ? 'Created' :
-                                        statusCode === 400 ? 'Bad Request' :
-                                            statusCode === 401 ? 'Unauthorized' :
-                                                statusCode === 404 ? 'Not Found' :
-                                                    statusCode === 500 ? 'Server Error' : 'Unknown'}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Response Body Type */}
-                <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800 mt-2">
-                    {['json', 'variable'].map((t) => (
-                        <button
-                            key={t}
-                            className={`flex-1 text-[10px] uppercase font-bold py-1 px-2 rounded-md transition-colors ${responseType === t
-                                ? 'bg-slate-700 text-white shadow-sm'
-                                : 'text-slate-500 hover:text-slate-300'
-                                }`}
-                            onClick={() => {
-                                setResponseType(t);
-                                data.responseType = t;
-                            }}
-                        >
-                            {t}
-                        </button>
-                    ))}
-                </div>
-
-                {/* Body Input */}
-                <div>
-                    <div className="flex justify-between items-center mb-1.5">
-                        <label className="text-xs font-semibold text-slate-500 block">Response Body</label>
-                    </div>
-
-                    {responseType === 'json' ? (
-                        <>
-                            <textarea
-                                value={body}
+                    {/* Status Code Selector */}
+                    <div>
+                        <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Status Code</label>
+                        <div className="flex gap-2">
+                            <input
+                                type="number"
+                                value={statusCode}
                                 onChange={(e) => {
-                                    setBody(e.target.value);
-                                    data.body = e.target.value;
+                                    const val = parseInt(e.target.value);
+                                    setStatusCode(val);
+                                    data.statusCode = val;
                                 }}
-                                className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 transition-colors resize-none mb-2"
-                                placeholder='{ "message": "Success" }'
+                                className="w-20 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
                             />
-                            {/* Variable Suggestions */}
-                            {variables.length > 0 && (
-                                <div className="flex flex-wrap gap-1.5">
-                                    <span className="text-[10px] text-slate-600 mr-1 pt-0.5">Insert:</span>
-                                    {variables.map(v => (
-                                        <button
-                                            key={v.id}
-                                            onClick={() => insertVariable(v.name)}
-                                            className="px-1.5 py-0.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/20 rounded text-[10px] font-mono transition-colors flex items-center gap-1"
-                                            title={`Type: ${v.type}`}
-                                        >
-                                            <Database className="w-2.5 h-2.5" />
-                                            {v.name}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </>
-                    ) : (
-                        <div className="flex flex-col gap-2">
-                            <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
-                                <span className="text-pink-500 font-mono text-xs mr-1">$</span>
-                                <input
-                                    type="text"
-                                    value={body}
-                                    onChange={(e) => {
-                                        setBody(e.target.value);
-                                        data.body = e.target.value;
-                                    }}
-                                    placeholder="variableName"
-                                    className="flex-1 bg-transparent border-none text-xs text-white focus:outline-none font-mono"
-                                />
+                            <div className={`flex-1 flex items-center px-3 rounded-lg border text-xs font-medium ${getStatusColor(statusCode)}`}>
+                                {statusCode >= 200 && statusCode < 300 && <CheckCircle className="w-3.5 h-3.5 mr-2" />}
+                                {statusCode >= 400 && <AlertTriangle className="w-3.5 h-3.5 mr-2" />}
+                                <span>
+                                    {statusCode === 200 ? 'OK' :
+                                        statusCode === 201 ? 'Created' :
+                                            statusCode === 400 ? 'Bad Request' :
+                                                statusCode === 401 ? 'Unauthorized' :
+                                                    statusCode === 404 ? 'Not Found' :
+                                                        statusCode === 500 ? 'Server Error' : 'Unknown'}
+                                </span>
                             </div>
-
-                            {/* Variable Picker for 'variable' mode */}
-                            {variables.length > 0 && (
-                                <div className="grid grid-cols-2 gap-1">
-                                    {variables.map(v => (
-                                        <button
-                                            key={v.id}
-                                            onClick={() => {
-                                                setBody(v.name);
-                                                data.body = v.name;
-                                            }}
-                                            className={`px-2 py-1.5 rounded text-[10px] font-mono text-left truncate transition-colors flex items-center gap-2 ${body === v.name ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
-                                        >
-                                            <Database className="w-3 h-3 shrink-0" />
-                                            {v.name}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
                         </div>
-                    )}
-                </div>
+                    </div>
 
-            </div>
+                    {/* Response Body Type */}
+                    <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800 mt-2">
+                        {['json', 'variable'].map((t) => (
+                            <button
+                                key={t}
+                                className={`flex-1 text-[10px] uppercase font-bold py-1 px-2 rounded-md transition-colors ${responseType === t
+                                    ? 'bg-slate-700 text-white shadow-sm'
+                                    : 'text-slate-500 hover:text-slate-300'
+                                    }`}
+                                onClick={() => {
+                                    setResponseType(t);
+                                    data.responseType = t;
+                                }}
+                            >
+                                {t}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Body Input */}
+                    <div>
+                        <div className="flex justify-between items-center mb-1.5">
+                            <label className="text-xs font-semibold text-slate-500 block">Response Body</label>
+                        </div>
+
+                        {responseType === 'json' ? (
+                            <>
+                                {/* We use SuggestionInput but we might want it to behave like a textarea? 
+                                Current SuggestionInput is single line. 
+                                For strictly "All nodes" request, let's use SuggestionInput for now. 
+                             */}
+                                <SuggestionInput
+                                    nodeId={id}
+                                    value={body}
+                                    onValueChange={(val) => {
+                                        setBody(val);
+                                        data.body = val;
+                                    }}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 transition-colors mb-2"
+                                    placeholder='{ "message": "$myVar" }'
+                                />
+                            </>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg px-3 py-2">
+                                    <span className="text-pink-500 font-mono text-xs mr-1">$</span>
+                                    <input
+                                        type="text"
+                                        value={body}
+                                        onChange={(e) => {
+                                            setBody(e.target.value);
+                                            data.body = e.target.value;
+                                        }}
+                                        placeholder="variableName"
+                                        className="flex-1 bg-transparent border-none text-xs text-white focus:outline-none font-mono"
+                                    />
+                                </div>
+
+                                {/* Variable Picker for 'variable' mode */}
+                                {variables.length > 0 && (
+                                    <div className="grid grid-cols-2 gap-1">
+                                        {variables.map(v => (
+                                            <button
+                                                key={v.id}
+                                                onClick={() => {
+                                                    setBody(v.name);
+                                                    data.body = v.name;
+                                                }}
+                                                className={`px-2 py-1.5 rounded text-[10px] font-mono text-left truncate transition-colors flex items-center gap-2 ${body === v.name ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                                            >
+                                                <Database className="w-3 h-3 shrink-0" />
+                                                {v.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                </div>
+            )}
         </div>
     );
 }

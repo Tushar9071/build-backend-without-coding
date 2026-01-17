@@ -25,6 +25,8 @@ interface WorkflowState {
   updateWorkflow: (id: string, data: Partial<Workflow>) => Promise<void>;
   deleteWorkflow: (id: string) => Promise<void>;
   runWorkflow: (id: string, inputData: any) => Promise<any>;
+  deployWorkflow: (id: string, token: string, repoName: string) => Promise<{ repo_url: string }>;
+  downloadWorkflowCode: (id: string) => Promise<void>;
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -147,6 +149,38 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     } catch (err: any) {
       set({ error: err.message, isLoading: false });
       toast.error('Failed to delete workflow');
+    }
+  },
+
+  deployWorkflow: async (id, token, repoName) => {
+    set({ isLoading: true });
+    try {
+      const response = await api.post(endpoints.github.deploy, {
+         workflow_id: id,
+         github_token: token,
+         repo_name: repoName
+      });
+      toast.success('Deployed successfully!');
+      return response.data;
+    } catch (error: any) {
+        toast.error('Deployment failed: ' + (error.response?.data?.detail || error.message));
+        throw error;
+    } finally {
+        set({ isLoading: false });
+    }
+  },
+
+  downloadWorkflowCode: async (id) => {
+    try {
+        const url = `${api.defaults.baseURL}${endpoints.github.download(id)}`;
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `workflow-${id}.zip`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    } catch (error: any) {
+        toast.error('Download failed');
     }
   }
 }));

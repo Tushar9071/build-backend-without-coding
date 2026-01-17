@@ -20,6 +20,8 @@ from app.api.v1 import dashboard
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 from app.api.v1 import invoke
 app.include_router(invoke.router, prefix="/api/v1/invoke", tags=["Invocation"])
+from app.api.v1 import github
+app.include_router(github.router, prefix="/api/v1/github", tags=["GitHub"])
 
 @app.get("/")
 async def root():

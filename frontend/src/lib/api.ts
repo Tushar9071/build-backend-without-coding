@@ -16,6 +16,10 @@ export const endpoints = {
     delete: (id: string) => `/workflows/${id}`,
     run: (id: string) => `/workflows/${id}/run`,
   },
+  github: {
+    deploy: '/github/deploy',
+    download: (id: string) => `/github/download/${id}`,
+  },
   dashboard: {
     stats: '/dashboard/stats'
   }

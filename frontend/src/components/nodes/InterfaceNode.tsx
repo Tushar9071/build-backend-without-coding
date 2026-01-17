@@ -1,57 +1,48 @@
-import { Handle, Position, useReactFlow } from '@xyflow/react';
-import { FileJson, Plus, Trash2 } from 'lucide-react';
+import { Handle, Position, useReactFlow, useEdges, useNodes } from '@xyflow/react';
+import { FileJson, Trash2, Maximize2, Minimize2 } from 'lucide-react';
 import { useState } from 'react';
-
-export interface FieldDefinition {
-    id: string;
-    name: string;
-    type: string;
-    required: boolean;
-    value?: string;
-}
+import { SchemaEditor, type FieldDefinition } from '../ui/SchemaEditor';
 
 export function InterfaceNode({ id, data }: { id: string, data: any }) {
     const { deleteElements } = useReactFlow();
+    const edges = useEdges();
+    const nodes = useNodes();
 
-    // Initialize fields
-    const initialFields = (data.fields || []).map((f: any) => ({
-        ...f,
-        value: f.value || f.defaultValue || ''
-    }));
+    const isConnectedToApi = edges.some(edge => {
+        if (edge.target !== id) return false;
+        const sourceNode = nodes.find(n => n.id === edge.source);
+        return sourceNode?.type === 'api';
+    });
 
-    const [fields, setFields] = useState<FieldDefinition[]>(initialFields);
+    // Initialize fields - ensure they have children arrays initialized
+    const normalizeFields = (list: any[]): FieldDefinition[] => {
+        return list.map(f => ({
+            ...f,
+            id: f.id || crypto.randomUUID(), // ensure ID
+            value: f.value || f.defaultValue || '',
+            children: normalizeFields(f.children || [])
+        }));
+    };
 
-    const handleDelete = () => {
+    // We use a local state to ensure render updates, but sync to data
+    const [fields, setFields] = useState<FieldDefinition[]>(() => normalizeFields(data.fields || []));
+
+    const handleFieldsChange = (newFields: FieldDefinition[]) => {
+        setFields(newFields);
+        data.fields = newFields;
+    };
+
+    const handleDeleteNode = () => {
         deleteElements({ nodes: [{ id }] });
     };
 
-    const addField = () => {
-        const newField: FieldDefinition = {
-            id: crypto.randomUUID(),
-            name: '',
-            type: 'string',
-            required: true,
-            value: ''
-        };
-        const updated = [...fields, newField];
-        setFields(updated);
-        data.fields = updated;
-    };
-
-    const updateField = (fieldId: string, updates: Partial<FieldDefinition>) => {
-        const updated = fields.map(f => f.id === fieldId ? { ...f, ...updates } : f);
-        setFields(updated);
-        data.fields = updated;
-    };
-
-    const removeField = (fieldId: string) => {
-        const updated = fields.filter(f => f.id !== fieldId);
-        setFields(updated);
-        data.fields = updated;
-    };
+    const [expanded, setExpanded] = useState(false);
 
     return (
-        <div className="bg-slate-900 border-2 border-slate-700 hover:border-orange-500 rounded-xl min-w-[500px] shadow-xl transition-all group flex flex-col">
+        <div
+            onDoubleClick={() => setExpanded(!expanded)}
+            className={`bg-slate-900 border-2 border-slate-700 hover:border-orange-500 rounded-xl shadow-xl transition-all group flex flex-col ${expanded ? 'min-w-[500px]' : 'min-w-[200px]'}`}
+        >
 
             {/* Input Handle */}
             <Handle
@@ -68,108 +59,47 @@ export function InterfaceNode({ id, data }: { id: string, data: any }) {
                     </div>
                     <div>
                         <span className="font-semibold text-white text-sm block leading-none">Interface Schema</span>
-                        <span className="text-[10px] text-slate-500 font-medium">Request Body Validation</span>
+                        <span className="text-[10px] text-slate-500 font-medium">Validation</span>
                     </div>
                 </div>
-                <button
-                    onClick={handleDelete}
-                    className="text-slate-500 hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-800"
-                >
-                    <Trash2 className="w-4 h-4" />
-                </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-4 flex-1 flex flex-col gap-4">
-
-                {/* Fields List */}
-                <div className="space-y-2">
-                    <div className="flex px-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 gap-2">
-                        <div className="flex-[1.5]">Field Name</div>
-                        <div className="flex-1">Expected Value</div>
-                        <div className="w-24 text-center">Type</div>
-                        <div className="w-8 text-center">Req</div>
-                        <div className="w-6"></div>
-                    </div>
-
-                    {fields.length === 0 && (
-                        <div className="text-center py-6 text-slate-600 text-xs border border-dashed border-slate-800 rounded-lg">
-                            No fields defined
-                        </div>
+                <div className="flex items-center gap-2">
+                    {isConnectedToApi && (
+                        <select
+                            className="bg-slate-900 border border-slate-700 text-[10px] text-slate-300 rounded px-2 py-1 focus:outline-none focus:border-orange-500 nodrag"
+                            defaultValue={data.transferMode || 'body'}
+                            onChange={(e) => {
+                                data.transferMode = e.target.value;
+                            }}
+                        >
+                            <option value="body">Body</option>
+                            <option value="query">Query</option>
+                            <option value="params">Params</option>
+                        </select>
                     )}
-
-                    {fields.map((field) => (
-                        <div key={field.id} className="flex gap-2 items-center group/row">
-
-                            {/* Name Input */}
-                            <div className="flex-[1.5]">
-                                <input
-                                    type="text"
-                                    value={field.name}
-                                    onChange={(e) => updateField(field.id, { name: e.target.value })}
-                                    className="nodrag w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-orange-500 font-mono placeholder:text-slate-600"
-                                    placeholder="key"
-                                />
-                            </div>
-
-                            {/* Value Input (Restored) */}
-                            <div className="flex-1">
-                                <input
-                                    type="text"
-                                    value={field.value}
-                                    onChange={(e) => updateField(field.id, { value: e.target.value })}
-                                    className="nodrag w-full bg-slate-950 border border-slate-800 rounded px-2 py-1.5 text-xs text-emerald-400 focus:outline-none focus:border-orange-500 font-mono placeholder:text-slate-700"
-                                    placeholder="any value"
-                                />
-                            </div>
-
-                            {/* Type Select */}
-                            <div className="w-24">
-                                <select
-                                    value={field.type}
-                                    onChange={(e) => updateField(field.id, { type: e.target.value })}
-                                    className="nodrag w-full bg-slate-950 border border-slate-800 rounded px-1 py-1.5 text-xs text-indigo-300 focus:outline-none focus:border-orange-500 appearance-none text-center font-bold cursor-pointer hover:bg-slate-900"
-                                >
-                                    <option value="string">String</option>
-                                    <option value="number">Number</option>
-                                    <option value="boolean">Boolean</option>
-                                    <option value="object">Object</option>
-                                    <option value="array">Array</option>
-                                </select>
-                            </div>
-
-                            {/* Required Checkbox */}
-                            <div className="w-8 flex justify-center">
-                                <input
-                                    type="checkbox"
-                                    checked={field.required}
-                                    onChange={(e) => updateField(field.id, { required: e.target.checked })}
-                                    className="nodrag w-4 h-4 rounded border-slate-700 bg-slate-900 text-orange-500 focus:ring-offset-slate-900 focus:ring-orange-500 cursor-pointer"
-                                />
-                            </div>
-
-                            {/* Delete Action */}
-                            <div className="w-6 flex justify-center">
-                                <button
-                                    onClick={() => removeField(field.id)}
-                                    className="nodrag text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover/row:opacity-100"
-                                >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                            </div>
-                        </div>
-                    ))}
+                    <button
+                        onClick={() => setExpanded(!expanded)}
+                        className="text-slate-500 hover:text-white transition-colors p-1"
+                    >
+                        {expanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                    </button>
+                    <button
+                        onClick={handleDeleteNode}
+                        className="text-slate-500 hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-800"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
                 </div>
-
-                {/* Add Button */}
-                <button
-                    onClick={addField}
-                    className="nodrag flex items-center justify-center gap-2 w-full py-2 rounded-lg border border-dashed border-slate-700 hover:border-orange-500/50 hover:bg-orange-500/5 text-slate-500 hover:text-orange-400 transition-all text-xs font-medium"
-                >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add Field
-                </button>
             </div>
+
+            {expanded && (
+                <div className="p-4 flex-1 flex flex-col gap-4">
+                    <SchemaEditor
+                        nodeId={id}
+                        fields={fields}
+                        onChange={handleFieldsChange}
+                    />
+                </div>
+            )}
 
             {/* Footer Status */}
             <div className="bg-slate-950/50 p-2 rounded-b-xl border-t border-slate-800 flex items-center justify-between">

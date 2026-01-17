@@ -10,17 +10,19 @@ This document provides a comprehensive overview of the `uibackend` project. It i
 
 ### Frontend
 - **Framework**: React 18 (Vite)
-- **Styling**: Tailwind CSS v3/v4 (Dark Mode centered)
-- **State Management**: Zustand
+- **Styling**: Tailwind CSS v3 (Dark Mode centered)
+- **State Management**: Zustandss
 - **Graph/Canvas**: `@xyflow/react` (React Flow)
 - **Icons**: `lucide-react`
 - **Notifications**: `react-hot-toast`
+- **HTTP Client**: Axios with dynamic base URL support.
 
 ### Backend
 - **Framework**: FastAPI (Python 3.10+)
 - **Server**: Uvicorn
 - **Data Handling**: Pydantic v2
 - **Execution Engine**: Custom Graph Traversal (BFS/Cycle-aware)
+- **Database**: PostgreSQL (SQLAlchemy Async + AsyncPG)
 
 ## 3. Core Architecture
 
@@ -33,20 +35,25 @@ Workflows are saved as JSON structures containing `nodes` and `edges`, which the
 ├── backend/
 │   ├── app/
 │   │   ├── api/v1/         # REST Endpoints (workflows.py, invoke.py)
-│   │   ├── main.py         # Entry point
+│   │   ├── core/
+│   │   │   └── database.py # DB Settings, Engine, and Env management
+│   │   ├── main.py         # Entry point (CORS, Middlewares)
 │   │   ├── services/
 │   │   │   └── workflow_runner.py  # <--- CORE EXECUTION LOGIC
 │   │   └── schemas/        # Pydantic models
-│   └── .env
+│   └── .env                # Backend Secrets (DB_URL, etc.)
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── nodes/      # Custom Node Components (ApiNode, LogicNode, etc.)
+│   │   │   ├── nodes/      # Custom Node Components (ApiNode, MathNode, DataNode, etc.)
 │   │   │   └── ui/         # Generic UI (NodesToolbar, etc.)
 │   │   ├── pages/
 │   │   │   └── WorkflowBuilder.tsx # <--- MAIN CANVAS COMPONENT
 │   │   ├── store/          # Zustand Stores (workflowStore, themeStore)
-│   │   └── hooks/          # Custom hooks (useUndoRedo)
+│   │   ├── hooks/          # Custom hooks (useUndoRedo)
+│   │   └── lib/
+│   │       └── api.ts      # Axios wrapper w/ VITE_API_BASE_URL support
+│   └── .env                # Frontend Configuration (VITE_API_BASE_URL)
 └── docker-compose.yml
 ```
 
@@ -55,48 +62,39 @@ Workflows are saved as JSON structures containing `nodes` and `edges`, which the
 ### A. The Nodes (Frontend)
 All custom nodes live in `frontend/src/components/nodes/`. They must be registered in `WorkflowBuilder.tsx`'s `nodeTypes`.
 
-1.  **ApiNode (`api`)**: Entry point. Defines HTTP method/path.
-2.  **InterfaceNode (`interface`)**: Defines request schema (body validation).
-3.  **VariableNode (`variable`)**:
-    -   Stores/updates data.
-    -   Supports String, Number, Boolean, JSON, Array.
-    -   **Inputs**: Top Handle (update value), Right Handle (continue flow).
-    -   **Dynamic**: Accepts `{variable}` substitution.
-4.  **LogicNode (`logic`)**:
-    -   Conditional branching (If/Else).
-    -   Outputs: "True" and "False" handles.
-5.  **LoopNode (`loop`)**:
-    -   Iterates over arrays (`body.items`).
-    -   Outputs: "Next" (Do) and "Done" (Finished).
-6.  **ResponseNode (`response`)**: Returns final API response.
+1.  **ApiNode (`api`)**: Entry point. Defines HTTP method/path. Shows dynamic Invocation URL.
+2.  **InterfaceNode (`interface`)**: Defines request schema.
+3.  **VariableNode (`variable`)**: Stores/updates data.
+4.  **MathNode (`math`)** (NEW):
+    *   Performs arithmetic (`+`, `-`, `*`, `/`, `%`).
+    *   Dynamic inputs (strings or numbers).
+    *   Stores result in specified variable.
+5.  **DataNode (`data_op`)** (NEW):
+    *   Performs aggregations on Collections.
+    *   Ops: `Sum`, `Count`, `Avg`, `Min`, `Max`.
+    *   Takes Collection Name (e.g., `body.items`) and Output Variable.
+6.  **LogicNode (`logic`)**: Conditional branching (If/Else).
+7.  **LoopNode (`loop`)**: Iterates over arrays.
+8.  **ResponseNode (`response`)**: Returns final API response.
 
 ### B. The Execution Engine (Backend)
 Located in `backend/app/services/workflow_runner.py`.
 
 **Class: `WorkflowExecutor`**
-*   **`__init__`**: Builds adjacency list from edges.
-*   **`run(input_data)`**:
-    -   Initializes Global Context.
-    -   Runs BFS-like traversal.
-    -   Manages `_loop_states`.
-    -   Returns final response or execution logs.
+*   **`_resolve_val(val)`**: Helper to resolve `{variable}` substitutions and variable lookups recursively.
 *   **`execute_node(node)`**:
-    -   Contains specific logic for each node type.
-    -   **Variables**: Performs string substitution (e.g., replaces `{body.id}` with actual ID).
-    -   **Loops**: execution returns `{"result": "do"}` or `{"result": "done"}`.
+    *   **math**: coercion to float/int, handles division by zero.
+    *   **data_op**: extracts numbers from list collections and applies Python's `sum`, `min`, `max`, etc.
+    *   **loop**: Robust collection resolution (supports dot notation `body.users`).
 
-### C. Data Flow & Context
-*   **Context**: A global dictionary `self.context` shared across the execution.
-*   **Initialization**: `input_data` (body, query, params) is flattened into `context` at start.
-*   **Substitution**: Strings like `{varName}` are replaced with values from context at runtime.
-
-### D. Looping Logic
-Loops are handled by the `LoopNode` type:
-1.  **State**: Tracks current index in `context['_loop_states']`.
-2.  **Routing**:
-    -   If items remain: Routes to `do` handle.
-    -   If finished: Routes to `done` handle.
-3.  **Frontend Wiring**: Users must connect the end of the "Do" chain back to the Loop Node's input handle to close the cycle.
+### C. Configuration & Environment
+*   **Backend**: 
+    *   Uses `pydantic-settings` in `app/core/database.py`.
+    *   Env Vars: `DATABASE_URL`, `FRONTEND_URL`.
+*   **Frontend**: 
+    *   Uses Vite's `import.meta.env`.
+    *   Env Vars: `VITE_API_BASE_URL`.
+    *   Production: Uses these vars to point to correct API and display correct Invocation URLs.
 
 ## 5. How to Make Changes
 
@@ -110,16 +108,14 @@ Loops are handled by the `LoopNode` type:
         -   Add `elif node_type == 'my_new_node':` in `execute_node`.
         -   Implement logic (interactions with `self.context`).
 
-### Improving Execution
-*   Modify `workflow_runner.py`.
-*   Note: `execute_node` returns a dict. If it returns `{ "type": "response", ... }`, the workflow halts and responds immediately.
-
-### Styling
-*   Use tailwind classes.
-*   Common Theme: Dark mode (`bg-slate-900`, `border-slate-800`, Text `slate-300`).
-*   **Crucial**: Add `nodrag` class to all form elements (inputs, selects) inside nodes prevents dragging the node when interacting.
+### Build & Deploy
+*   **Backend**: `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+*   **Frontend**: `npm run build` -> Serve `dist/`.
 
 ## 6. Current State & Notes
-*   **Undo/Redo**: Implemented via `useUndoRedo` hook.
-*   **Theme**: Dark/Light mode support (persisted in local storage).
-*   **Run**: "Run" button opens a modal to test workflows with JSON input.
+*   **Status**: Active Development.
+*   **Recent Fixes**:
+    *   Resolved all React build errors (unused vars).
+    *   Fixed Backend CORS and startup crashes by adding `FRONTEND_URL` to Settings.
+    *   Fixed Production URL display in `ApiNode`.
+*   **Git**: Repository initialized, `.gitignore` configured for sensitive files.

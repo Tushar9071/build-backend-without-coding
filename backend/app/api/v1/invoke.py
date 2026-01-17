@@ -20,6 +20,8 @@ async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depend
     matched_workflow = None
     
     # 2. Find matching workflow based on API Node configuration
+    matched_params = {}
+    
     for workflow in workflows:
         if not workflow.nodes:
             continue
@@ -28,15 +30,39 @@ async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depend
         for node in workflow.nodes:
             if node.get('type') == 'api':
                 data = node.get('data', {})
-                # Normalize path: remove leading slash for comparison if needed
-                node_path = data.get('path', '/').strip('/')
-                input_path = path.strip('/')
-                
                 node_method = data.get('method', 'GET').upper()
                 request_method = request.method.upper()
                 
-                if node_path == input_path and node_method == request_method:
+                if node_method != request_method:
+                    continue
+
+                # Path Matching Logic
+                node_path_raw = data.get('path', '/').strip('/')
+                input_path_raw = path.strip('/')
+                
+                # Robust splitting and stripping
+                node_parts = [p.strip() for p in node_path_raw.split('/') if p.strip()]
+                input_parts = [p.strip() for p in input_path_raw.split('/') if p.strip()]
+                
+                if len(node_parts) != len(input_parts):
+                    continue
+                
+                is_match = True
+                current_params = {}
+                
+                for i, part in enumerate(node_parts):
+                    if part.startswith(':'):
+                        # Capture param
+                        param_name = part[1:].strip()
+                        current_params[param_name] = input_parts[i]
+                    elif part != input_parts[i]:
+                        is_match = False
+                        break
+                
+                if is_match:
                     matched_workflow = workflow
+                    matched_params = current_params
+                    matched_node_id = node.get('id')
                     break
         if matched_workflow:
             break
@@ -45,15 +71,27 @@ async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depend
         raise HTTPException(status_code=404, detail=f"No workflow found for {request.method} /{path}")
 
     # 3. Parse Body if present
-    input_data = {}
+    body_data = {}
     if request.method in ["POST", "PUT", "PATCH"]:
         try:
-            input_data = await request.json()
+            body_data = await request.json()
         except:
-            input_data = {}
+            body_data = {}
+            
+    # Prepare input data with structured context
+    # Merge extracted params with any existing path params
+    final_params = dict(request.path_params)
+    final_params.update(matched_params)
     
-    # Add query params to input
-    input_data.update(dict(request.query_params))
+    input_data = {
+        "body": body_data,
+        "query": dict(request.query_params),
+        "params": final_params,
+        "headers": dict(request.headers),
+        "method": request.method,
+        "path": path,
+        "start_node_id": matched_node_id
+    }
 
     # 4. Run Workflow
     workflow_data = {
