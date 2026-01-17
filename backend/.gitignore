@@ -1,0 +1,7 @@
+venv/
+linux_venv/
+__pycache__
+
+.env
+.env.example
+*__pycache__

@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", sans-serif;
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+/* Light mode defaults (when not .dark) */
+body {
+  font-family: var(--font-sans);
+  @apply bg-slate-50 text-slate-900;
+}
+
+/* Dark mode overrides (applied when .dark is present) */
+.dark body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+/* Utility classes mapping */
+@layer utilities {
+  .bg-card {
+    @apply bg-white dark:bg-slate-900;
+  }
+
+  .border-default {
+    @apply border-slate-200 dark:border-slate-800;
+  }
+
+  .text-default {
+    @apply text-slate-900 dark:text-slate-100;
+  }
+
+  .text-muted {
+    @apply text-slate-500 dark:text-slate-400;
+  }
+}

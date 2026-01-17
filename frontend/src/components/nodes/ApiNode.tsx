@@ -1,0 +1,169 @@
+import { Handle, Position, useReactFlow } from '@xyflow/react';
+import { Server, Copy, ExternalLink, AlertTriangle, Trash2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import { api } from '../../lib/api';
+import { toast } from 'react-hot-toast';
+
+export function ApiNode({ id, data }: { id: string, data: any }) {
+    const { deleteElements } = useReactFlow();
+    const { id: workflowId } = useParams<{ id: string }>();
+    const [method, setMethod] = useState(data.method || 'GET');
+    const [path, setPath] = useState(data.path || '/');
+    const [validation, setValidation] = useState<{ valid: boolean, message: string } | null>(null);
+
+    const handleDelete = () => {
+        deleteElements({ nodes: [{ id }] });
+    };
+
+    // Debounce validation
+    useEffect(() => {
+        const timer = setTimeout(async () => {
+            if (path && workflowId) {
+                try {
+                    // Assuming path needs to be checked without /api/v1/invoke prefix locally since we just want uniqueness among user definitions
+                    const res = await api.get(`/workflows/validate-path`, {
+                        params: {
+                            path,
+                            method,
+                            exclude_workflow_id: workflowId
+                        }
+                    });
+                    setValidation(res.data);
+                } catch (e) {
+                    console.error("Validation check failed", e);
+                }
+            }
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [path, method, workflowId]);
+
+    const fullUrl = `http://localhost:8000/api/v1/invoke${path.startsWith('/') ? '' : '/'}${path}`;
+
+    const copyUrl = () => {
+        navigator.clipboard.writeText(fullUrl);
+        toast.success("URL copied to clipboard");
+    };
+
+    return (
+        <div className={`bg-slate-900 border-2 rounded-xl min-w-[320px] shadow-xl transition-all group ${validation?.valid === false ? 'border-red-500' : 'border-slate-700 hover:border-indigo-500'}`}>
+            {/* Header */}
+            <div className="bg-slate-950 p-3 rounded-t-xl border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <div className={`p-1.5 rounded-lg ${validation?.valid === false ? 'bg-red-500/20 text-red-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                        <Server className="w-4 h-4" />
+                    </div>
+                    <span className="font-semibold text-white text-sm">API Endpoint</span>
+                </div>
+                <button
+                    onClick={handleDelete}
+                    className="text-slate-500 hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-800"
+                >
+                    <Trash2 className="w-4 h-4" />
+                </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 space-y-4">
+
+                {validation?.valid === false && (
+                    <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2 flex gap-2 items-start">
+                        <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                        <p className="text-[10px] text-red-300 leading-tight">{validation.message}</p>
+                    </div>
+                )}
+
+                <div>
+                    <label className="text-xs font-semibold text-slate-500 mb-1.5 block">HTTP Method</label>
+                    <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
+                        {['GET', 'POST', 'PUT', 'DELETE'].map((m) => (
+                            <button
+                                key={m}
+                                className={`flex-1 text-[10px] font-bold py-1 px-2 rounded-md transition-colors ${method === m
+                                    ? 'bg-indigo-600 text-white shadow-sm'
+                                    : 'text-slate-500 hover:text-slate-300'
+                                    }`}
+                                onClick={() => {
+                                    setMethod(m);
+                                    data.method = m;
+                                }}
+                            >
+                                {m}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div>
+                    <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Endpoint Path</label>
+                    <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg px-3 overflow-hidden focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
+                        <span className="text-slate-600 text-[10px] font-mono whitespace-nowrap mr-1">/api/v1/invoke/</span>
+                        <input
+                            type="text"
+                            value={path}
+                            onChange={(e) => {
+                                let newPath = e.target.value;
+                                // Basic cleanup if user tries to paste full url or prefix
+                                if (newPath.startsWith('/')) newPath = newPath.substring(1);
+                                setPath(newPath);
+                                data.path = newPath;
+                            }}
+                            className="flex-1 bg-transparent border-none text-xs font-mono text-white p-2 pl-0 focus:outline-none"
+                            placeholder="users"
+                        />
+                    </div>
+                </div>
+
+                {/* URL Preview & Copy */}
+                <div className="bg-slate-950/50 p-2 rounded-lg border border-slate-800/50 flex flex-col gap-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600">Invocation URL</label>
+                    <div className="flex items-center justify-between gap-2">
+                        <code className="text-[10px] text-slate-400 truncate max-w-[220px] font-mono select-all">
+                            {fullUrl}
+                        </code>
+                        <div className="flex gap-1 shrink-0">
+                            <button onClick={copyUrl} className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors" title="Copy URL">
+                                <Copy className="w-3 h-3" />
+                            </button>
+                            <a href={fullUrl} target="_blank" rel="noopener noreferrer" className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors" title="Open in new tab">
+                                <ExternalLink className="w-3 h-3" />
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Implicit Variables Info */}
+                <div className="bg-indigo-500/5 p-2 rounded-lg border border-indigo-500/10">
+                    <label className="text-[10px] uppercase font-bold text-indigo-400/80 mb-1 block">Available Variables</label>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                        Request data is automatically available in:
+                    </p>
+                    <div className="flex gap-2 mt-1.5 font-mono text-[10px]">
+                        <span className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300">{`{body}`}</span>
+                        <span className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300">{`{query}`}</span>
+                        <span className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300">{`{params}`}</span>
+                    </div>
+                </div>
+
+            </div>
+
+            {/* Footer / Status */}
+            <div className="bg-slate-950/50 p-2 rounded-b-xl border-t border-slate-800 flex items-center justify-between">
+                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Trigger</span>
+                <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${validation?.valid === false ? 'bg-red-500' : 'bg-green-500 animate-pulse'}`} />
+                    <span className={`text-[10px] font-medium ${validation?.valid === false ? 'text-red-400' : 'text-green-400'}`}>
+                        {validation?.valid === false ? 'Conflict' : 'Active'}
+                    </span>
+                </div>
+            </div>
+
+            {/* Output Handle */}
+            <Handle
+                type="source"
+                position={Position.Bottom}
+                className="!bg-indigo-500 !w-3 !h-3 !border-2 !border-slate-900"
+            />
+        </div>
+    );
+}
