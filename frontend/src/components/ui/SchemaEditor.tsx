@@ -1,5 +1,4 @@
 
-import { useState } from 'react';
 import { Plus, Trash2, CornerDownRight } from 'lucide-react';
 import { SuggestionInput } from './SuggestionInput';
 
