@@ -38,7 +38,8 @@ export function ApiNode({ id, data }: { id: string, data: any }) {
         return () => clearTimeout(timer);
     }, [path, method, workflowId]);
 
-    const fullUrl = `http://localhost:8000/api/v1/invoke${path.startsWith('/') ? '' : '/'}${path}`;
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+    const fullUrl = `${baseUrl}/invoke${path.startsWith('/') ? '' : '/'}${path}`;
 
     const copyUrl = () => {
         navigator.clipboard.writeText(fullUrl);

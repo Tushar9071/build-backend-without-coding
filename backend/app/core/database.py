@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/uibackend"
     SECRET_KEY: str = "supersecretkey"
+    FRONTEND_URL: str = "http://localhost:5173"
 
     class Config:
         env_file = ".env"
