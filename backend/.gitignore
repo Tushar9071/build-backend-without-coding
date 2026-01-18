@@ -5,3 +5,5 @@ __pycache__
 .env
 .env.example
 *__pycache__
+.vercel
+firebase-service-account.json

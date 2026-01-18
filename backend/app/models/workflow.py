@@ -12,6 +12,7 @@ class Workflow(Base):
     description = Column(Text, nullable=True)
     nodes = Column(JSON, default=[])  # Stores the React Flow nodes
     edges = Column(JSON, default=[])  # Stores the React Flow edges
+    user_id = Column(String, nullable=True, index=True) # Firebase UID
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -32,4 +33,5 @@ class DatabaseConnection(Base):
     name = Column(String, nullable=False)
     type = Column(String, nullable=False)  # postgres, mysql, etc
     connection_string = Column(String, nullable=False) # In real app, encrypt this!
+    user_id = Column(String, nullable=True, index=True) # Firebase UID
     created_at = Column(DateTime(timezone=True), server_default=func.now())

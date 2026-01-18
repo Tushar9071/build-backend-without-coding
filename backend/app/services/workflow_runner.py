@@ -19,14 +19,17 @@ class WorkflowExecutor:
         self.context = {} # Variable storage
         self.execution_log = []
 
-    def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, input_data: Dict[str, Any], db_session = None, user_id: str = None) -> Dict[str, Any]:
         """
         Execute the workflow starting from the 'api' node.
         """
+        self.db_session = db_session
+        self.user_id = user_id
+
         # 1. Initialize all Variables first (Global Scope)
         for node_id, node in self.nodes.items():
             if node['type'] == 'variable':
-                self.execute_node(node)
+                await self.execute_node(node)
                 
         # Find start node (API Node)
         start_node = None
@@ -87,7 +90,7 @@ class WorkflowExecutor:
                 self.execution_log.append(f"Executing Node: {node_type} ({node_id})")
 
                 try:
-                    res = self.execute_node(node)
+                    res = await self.execute_node(node)
                     
                     # Check for immediate response
                     if res and res.get('type') == 'response':
@@ -240,7 +243,7 @@ class WorkflowExecutor:
 
         return recursive_validate(fields, target_data)
 
-    def execute_node(self, node: Dict[str, Any]):
+    async def execute_node(self, node: Dict[str, Any]):
         node_type = node['type']
         data = node.get('data', {})
 
@@ -620,4 +623,74 @@ class WorkflowExecutor:
                     self.execution_log.append(f"Error parsing response body: {e}")
                     return {"type": "response", "data": {"raw": body_def, "error": "JSON parse error"}}
         
+        elif node_type == 'database':
+            # Database Operations
+            from app.services.external_db import ExternalDbService
+            from app.models.workflow import DatabaseConnection
+            from sqlalchemy import select
+
+            if not self.db_session:
+                 self.execution_log.append("Database Error: No System DB Session")
+                 return {"type": "database", "error": "System Error"}
+                 
+            # Fetch User's DB Connection
+            # match workflow owner
+            # We need user_id. Let's assume it's set in self.user_id
+            if not getattr(self, 'user_id', None):
+                 self.execution_log.append("Database Error: No User Context")
+                 # Fallback? No, strict auth required now.
+                 return {"type": "database", "error": "No User Context"}
+
+            # Query DB Connection for this user
+            # We assume 1 connection per user for MVP
+            stmt = select(DatabaseConnection).filter(DatabaseConnection.user_id == self.user_id)
+            res = await self.db_session.execute(stmt)
+            db_conn = res.scalars().first()
+            
+            if not db_conn:
+                 self.execution_log.append("Database Error: No External Database Configured for User")
+                 return {"type": "database", "error": "No External DB Config"}
+
+            engine = await ExternalDbService.get_engine(db_conn.connection_string)
+            
+            if not engine:
+                self.execution_log.append("Database Error: Could not connect to External DB")
+                return {"type": "database", "error": "Connection Failed"}
+                
+            query_template = data.get('query', '')
+            query_type = data.get('queryType', 'read') # read (select) or write (insert/update/delete)
+            result_var = data.get('resultVar', 'dbResult')
+            
+            from sqlalchemy import text
+            
+            resolved_query = self._resolve_val(query_template)
+            if not isinstance(resolved_query, str):
+                resolved_query = str(resolved_query)
+            
+            self.execution_log.append(f"DB Exec: {resolved_query[:100]}...")
+            
+            try:
+                # Use the external engine
+                async with engine.begin() as conn:
+                    # Bind parameters? 
+                    # Ideally pass params to text(), but we replaced strings already.
+                    # We can pass context params as a fallback for :param syntax
+                    params = {k: v for k, v in self.context.items() if isinstance(v, (str, int, float, bool, type(None)))}
+                    
+                    result = await conn.execute(text(resolved_query), params)
+                    
+                    if query_type == 'read' and result.returns_rows:
+                        rows = result.mappings().all()
+                        data_res = [dict(row) for row in rows]
+                        self.context[result_var] = data_res
+                        self.execution_log.append(f"DB Result: Found {len(data_res)} rows")
+                    else:
+                        # Write ops commit automatically with .begin() context manager
+                        self.context[result_var] = {"status": "success", "rows_affected": result.rowcount}
+                        self.execution_log.append(f"DB Write Success. Rows affected: {result.rowcount}")
+
+            except Exception as e:
+                self.execution_log.append(f"DB Error: {str(e)}")
+                return {"type": "database", "error": str(e)}
+
         return None

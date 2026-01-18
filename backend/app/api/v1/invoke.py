@@ -100,7 +100,7 @@ async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depend
     }
     
     executor = WorkflowExecutor(workflow_data)
-    result = executor.run(input_data)
+    result = await executor.run(input_data, db_session=db, user_id=matched_workflow.user_id)
     
     # 5. Return Result
     # Unwrap response if it fits standard structure

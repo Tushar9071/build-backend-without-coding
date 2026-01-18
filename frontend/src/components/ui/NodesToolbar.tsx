@@ -17,6 +17,7 @@ export function NodesToolbar({ onAddNode }: NodesToolbarProps) {
         { type: 'math', label: 'Math / Op', icon: Calculator, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'hover:border-blue-500/50' },
         { type: 'data_op', label: 'Data / Stats', icon: BarChart, color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'hover:border-teal-500/50' },
         { type: 'variable', label: 'Variable', icon: Database, color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'hover:border-cyan-500/50' },
+        { type: 'database', label: 'Database', icon: Database, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'hover:border-amber-500/50' },
         { type: 'response', label: 'Return Response', icon: Send, color: 'text-green-400', bg: 'bg-green-500/10', border: 'hover:border-green-500/50' },
     ];
 

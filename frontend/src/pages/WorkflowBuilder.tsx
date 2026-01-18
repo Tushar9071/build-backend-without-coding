@@ -13,6 +13,7 @@ import { InterfaceNode } from '../components/nodes/InterfaceNode';
 import { LoopNode } from '../components/nodes/LoopNode';
 import { MathNode } from '../components/nodes/MathNode';
 import { DataNode } from '../components/nodes/DataNode';
+import { DatabaseNode } from '../components/nodes/DatabaseNode';
 import { NodesToolbar } from '../components/ui/NodesToolbar';
 import { DeployModal } from '../components/ui/DeployModal';
 import { toast } from 'react-hot-toast';
@@ -45,6 +46,7 @@ function Flow() {
     loop: LoopNode,
     math: MathNode,
     data_op: DataNode,
+    database: DatabaseNode,
   }), []);
 
   useEffect(() => {
@@ -289,10 +291,10 @@ function Flow() {
         </ReactFlow>
       </div>
 
-      <DeployModal 
-        isOpen={isDeployModalOpen} 
-        onClose={() => setIsDeployModalOpen(false)} 
-        workflowId={id || ''} 
+      <DeployModal
+        isOpen={isDeployModalOpen}
+        onClose={() => setIsDeployModalOpen(false)}
+        workflowId={id || ''}
       />
 
       {/* Run Modal */}

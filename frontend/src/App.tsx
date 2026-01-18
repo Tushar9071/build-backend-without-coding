@@ -9,12 +9,26 @@ import DatabaseManager from './pages/DatabaseManager';
 import Runner from './pages/Runner';
 import Settings from './pages/Settings';
 import Workflows from './pages/Workflows';
-
+import Login from './pages/Login';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster } from 'react-hot-toast';
 import { useThemeStore } from './store/themeStore';
-import { useEffect } from 'react';
+import { useEffect, type JSX } from 'react';
 
-function App() {
+
+function RequireAuth({ children }: { children: JSX.Element }) {
+  const { user, loading } = useAuth();
+
+  if (loading) return <div className="h-screen w-screen flex items-center justify-center bg-slate-950 text-slate-500">Loading...</div>;
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
+
+function AppContent() {
   const { theme } = useThemeStore();
 
   useEffect(() => {
@@ -38,7 +52,9 @@ function App() {
         }}
       />
       <Routes>
-        <Route path="/" element={<MainLayout />}>
+        <Route path="/login" element={<Login />} />
+
+        <Route path="/" element={<RequireAuth><MainLayout /></RequireAuth>}>
           <Route index element={<Dashboard />} />
           <Route path="api-builder" element={<ApiBuilder />} />
           <Route path="workflows" element={<Workflows />} />
@@ -52,6 +68,14 @@ function App() {
       </Routes>
     </BrowserRouter>
   )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
 }
 
 export default App
