@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import workflows
+from sqlalchemy import text
 from app.core.database import engine, Base, settings
 
 
@@ -35,3 +36,15 @@ async def startup():
     async with engine.begin() as conn:
         # Create tables if they don't exist. Removed drop_all to persist data.
         await conn.run_sync(Base.metadata.create_all)
+        
+        # PROVISIONAL MIGRATION: Manually add user_id column if it doesn't exist
+        # This is a temporary fix until Alembic is properly set up
+        print("Checking for missing columns...")
+        try:
+             await conn.execute(text("ALTER TABLE workflows ADD COLUMN IF NOT EXISTS user_id VARCHAR"))
+             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_workflows_user_id ON workflows (user_id)"))
+             await conn.execute(text("ALTER TABLE db_connections ADD COLUMN IF NOT EXISTS user_id VARCHAR"))
+             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_db_connections_user_id ON db_connections (user_id)"))
+             print("Schema check complete.")
+        except Exception as e:
+            print(f"Schema check warning: {e}")
