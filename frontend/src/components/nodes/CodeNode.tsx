@@ -1,6 +1,6 @@
 
 import { Handle, Position, useReactFlow } from '@xyflow/react';
-import { FileCode, Play, Terminal, Trash2, Maximize2, Minimize2 } from 'lucide-react';
+import { FileCode, Trash2, Maximize2, Minimize2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 export function CodeNode({ id, data }: { id: string, data: any }) {
@@ -8,7 +8,7 @@ export function CodeNode({ id, data }: { id: string, data: any }) {
 
     // Default data
     const [code, setCode] = useState(data.code || '# Access variables via context\n# e.g.\n# val = context["myVar"]\n# context["result"] = val * 2\n\nresult = "Hello " + context.get("query", {}).get("name", "World")\ncontext["greeting"] = result');
-    const [language, setLanguage] = useState(data.language || 'python');
+    const [language] = useState(data.language || 'python');
     const [expanded, setExpanded] = useState(false);
 
     useEffect(() => {
@@ -63,7 +63,7 @@ export function CodeNode({ id, data }: { id: string, data: any }) {
                         <textarea
                             value={code}
                             onChange={(e) => setCode(e.target.value)}
-                            className="nodrag w-full h-64 bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500 leading-relaxed resize-y"
+                            className="nodrag nowheel w-full h-64 bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500 leading-relaxed resize-y"
                             spellCheck={false}
                             placeholder="# Write your python code here"
                         />

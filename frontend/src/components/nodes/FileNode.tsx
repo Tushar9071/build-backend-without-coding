@@ -1,6 +1,6 @@
 
 import { Handle, Position, useReactFlow } from '@xyflow/react';
-import { FileText, Trash2, FolderOpen, Save, Maximize2, Minimize2 } from 'lucide-react';
+import { FileText, Trash2, Maximize2, Minimize2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 export function FileNode({ id, data }: { id: string, data: any }) {
