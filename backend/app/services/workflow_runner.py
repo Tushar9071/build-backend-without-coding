@@ -1,5 +1,8 @@
 from typing import Dict, Any, List
 import json
+import re
+from datetime import datetime, date
+import uuid
 
 class WorkflowExecutor:
     def __init__(self, workflow_data: Dict[str, Any]):
@@ -18,6 +21,15 @@ class WorkflowExecutor:
             
         self.context = {} # Variable storage
         self.execution_log = []
+
+    def _safe_json_dumps(self, obj):
+        def default_serializer(o):
+            if isinstance(o, (datetime, date)):
+                return o.isoformat()
+            if isinstance(o, uuid.UUID):
+                return str(o)
+            return str(o) # Fallback to string for everything else
+        return json.dumps(obj, default=default_serializer)
 
     async def run(self, input_data: Dict[str, Any], db_session = None, user_id: str = None) -> Dict[str, Any]:
         """
@@ -78,12 +90,6 @@ class WorkflowExecutor:
             # Process current layer
             for node_id in current_nodes:
                 # Allow re-visiting for loops, but for DAGs we might want visited check.
-                # For this simple implementation, we allow re-visit if it's a different path, 
-                # but 'visited' set prevents infinite cycles for now if we strictly track ID.
-                # Removing strict visited check to allow merging paths, but we need loop detection.
-                # For now: simple visited check per run? No, visited check kills merge paths.
-                # Let's just run. Set-based 'visited' is bad for merge nodes (multiple inputs).
-                # We simply consume the current wave.
                 
                 node = self.nodes[node_id]
                 node_type = node['type']
@@ -334,7 +340,6 @@ class WorkflowExecutor:
             # Remove $ prefix from variables for python eval context
             # e.g. $valA > 10 -> valA > 10
             # We use regex to find $ followed by word characters
-            import re
             # Replace $word with word
             condition = re.sub(r'\$([a-zA-Z_]\w*)', r'\1', condition)
             
@@ -539,7 +544,6 @@ class WorkflowExecutor:
                 return {"type": "response", "data": val}
             else:
                 try:
-                    import re
                     
                     # Helper to resolve deep paths like "body.user.email"
                     def get_value_from_path(path_str, context):
@@ -559,11 +563,6 @@ class WorkflowExecutor:
                         return curr
 
                     final_body = body_def
-                    
-                    # Regex to find $variable or $var.prop.nested
-                    # Matches $ followed by word char, then optionally dots and word chars
-                    # We sort matches by length descending to replace longest paths first (not strictly needed with regex but safer)
-                    # But simpler: use re.sub with callback.
                     
                     # Regex to find $variable, enclosed $variable, or dot notation
                     # Matches:
@@ -606,22 +605,22 @@ class WorkflowExecutor:
                                 is_already_quoted = True
                                 
                         if is_wrapped_in_braces:
-                            return json.dumps(val)
+                            return self._safe_json_dumps(val)
                             
                         if is_already_quoted:
-                            s = json.dumps(val)
+                            s = self._safe_json_dumps(val)
                             if s.startswith('"') and s.endswith('"'):
                                 return s[1:-1]
                             return str(val)
                         else:
-                            return json.dumps(val)
+                            return self._safe_json_dumps(val)
 
                     final_body = re.sub(pattern, replacer, final_body)
 
                     return {"type": "response", "data": json.loads(final_body)}
                 except Exception as e:
                     self.execution_log.append(f"Error parsing response body: {e}")
-                    return {"type": "response", "data": {"raw": body_def, "error": "JSON parse error"}}
+                    return {"type": "response", "data": {"raw": body_def, "error": f"JSON Error: {str(e)}"}}
         
         elif node_type == 'database':
             # Database Operations

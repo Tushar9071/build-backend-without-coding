@@ -88,14 +88,14 @@ export default function Dashboard() {
       >
         <form onSubmit={handleCreate} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">
+            <label className="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1">
               Workflow Name
             </label>
             <input
               type="text"
               value={newWorkflowName}
               onChange={(e) => setNewWorkflowName(e.target.value)}
-              placeholder="e.g., User Validatiom Flow"
+              placeholder="e.g., User Validation Flow"
               className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
               autoFocus
             />
@@ -104,7 +104,7 @@ export default function Dashboard() {
             <button
               type="button"
               onClick={() => setIsModalOpen(false)}
-              className="px-4 py-2 text-slate-300 hover:text-white text-sm font-medium transition-colors"
+              className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white text-sm font-medium transition-colors"
             >
               Cancel
             </button>

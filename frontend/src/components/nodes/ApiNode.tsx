@@ -69,26 +69,26 @@ export function ApiNode({ id, data }: { id: string, data: any }) {
     return (
         <div
             onDoubleClick={() => setExpanded(!expanded)}
-            className={`bg-slate-900 border-2 rounded-xl shadow-xl transition-all group ${validation?.valid === false ? 'border-red-500' : 'border-slate-700 hover:border-indigo-500'} ${expanded ? 'min-w-[320px]' : 'min-w-[200px]'}`}
+            className={`bg-white dark:bg-slate-900 border-2 rounded-xl shadow-xl transition-all group ${validation?.valid === false ? 'border-red-500' : 'border-slate-200 dark:border-slate-700 hover:border-indigo-500 dark:hover:border-indigo-500'} ${expanded ? 'min-w-[320px]' : 'min-w-[200px]'}`}
         >
             {/* Header */}
-            <div className="bg-slate-950 p-3 rounded-t-xl border-b border-slate-800 flex items-center justify-between">
+            <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-t-xl border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                    <div className={`p-1.5 rounded-lg ${validation?.valid === false ? 'bg-red-500/20 text-red-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                    <div className={`p-1.5 rounded-lg ${validation?.valid === false ? 'bg-red-500/10 text-red-500 dark:bg-red-500/20 dark:text-red-400' : 'bg-indigo-500/10 text-indigo-500 dark:bg-indigo-500/20 dark:text-indigo-400'}`}>
                         <Server className="w-4 h-4" />
                     </div>
-                    <span className="font-semibold text-white text-sm">API Endpoint</span>
+                    <span className="font-semibold text-slate-900 dark:text-white text-sm">API Endpoint</span>
                 </div>
                 <div className="flex items-center gap-1">
                     <button
                         onClick={() => setExpanded(!expanded)}
-                        className="text-slate-500 hover:text-white transition-colors p-1"
+                        className="text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors p-1"
                     >
                         {expanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                     </button>
                     <button
                         onClick={handleDelete}
-                        className="text-slate-500 hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-800"
+                        className="text-slate-500 hover:text-red-500 dark:hover:text-red-400 transition-colors p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800"
                     >
                         <Trash2 className="w-4 h-4" />
                     </button>
@@ -107,13 +107,13 @@ export function ApiNode({ id, data }: { id: string, data: any }) {
 
                     <div>
                         <label className="text-xs font-semibold text-slate-500 mb-1.5 block">HTTP Method</label>
-                        <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
+                        <div className="flex bg-slate-100 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
                             {['GET', 'POST', 'PUT', 'DELETE'].map((m) => (
                                 <button
                                     key={m}
                                     className={`flex-1 text-[10px] font-bold py-1 px-2 rounded-md transition-colors ${method === m
-                                        ? 'bg-indigo-600 text-white shadow-sm'
-                                        : 'text-slate-500 hover:text-slate-300'
+                                        ? 'bg-white dark:bg-indigo-600 text-indigo-600 dark:text-white shadow-sm'
+                                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
                                         }`}
                                     onClick={() => {
                                         setMethod(m);
@@ -128,36 +128,35 @@ export function ApiNode({ id, data }: { id: string, data: any }) {
 
                     <div>
                         <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Endpoint Path</label>
-                        <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg px-3 overflow-hidden focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
-                            <span className="text-slate-600 text-[10px] font-mono whitespace-nowrap mr-1">/api/v1/invoke/</span>
+                        <div className="flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-3 overflow-hidden focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
+                            <span className="text-slate-400 dark:text-slate-600 text-[10px] font-mono whitespace-nowrap mr-1">/api/v1/invoke/</span>
                             <SuggestionInput
                                 nodeId={id}
                                 value={path}
                                 onValueChange={(val) => {
                                     let newPath = val;
-                                    // Basic cleanup if user tries to paste full url or prefix
                                     if (newPath.startsWith('/')) newPath = newPath.substring(1);
                                     setPath(newPath);
                                     data.path = newPath;
                                 }}
-                                className="flex-1 bg-transparent border-none text-xs font-mono text-white p-2 pl-0 focus:outline-none"
+                                className="flex-1 bg-transparent border-none text-xs font-mono text-slate-900 dark:text-white p-2 pl-0 focus:outline-none"
                                 placeholder="users"
                             />
                         </div>
                     </div>
 
                     {/* URL Preview & Copy */}
-                    <div className="bg-slate-950/50 p-2 rounded-lg border border-slate-800/50 flex flex-col gap-1">
-                        <label className="text-[10px] uppercase font-bold text-slate-600">Invocation URL</label>
+                    <div className="bg-slate-50 dark:bg-slate-950/50 p-2 rounded-lg border border-slate-200 dark:border-slate-800/50 flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-600">Invocation URL</label>
                         <div className="flex items-center justify-between gap-2">
-                            <code className="text-[10px] text-slate-400 truncate max-w-[220px] font-mono select-all">
+                            <code className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[220px] font-mono select-all">
                                 {fullUrl}
                             </code>
                             <div className="flex gap-1 shrink-0">
-                                <button onClick={copyUrl} className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors" title="Copy URL">
+                                <button onClick={copyUrl} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors" title="Copy URL">
                                     <Copy className="w-3 h-3" />
                                 </button>
-                                <a href={fullUrl} target="_blank" rel="noopener noreferrer" className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors" title="Open in new tab">
+                                <a href={fullUrl} target="_blank" rel="noopener noreferrer" className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors" title="Open in new tab">
                                     <ExternalLink className="w-3 h-3" />
                                 </a>
                             </div>
@@ -165,15 +164,15 @@ export function ApiNode({ id, data }: { id: string, data: any }) {
                     </div>
 
                     {/* Implicit Variables Info */}
-                    <div className="bg-indigo-500/5 p-2 rounded-lg border border-indigo-500/10">
-                        <label className="text-[10px] uppercase font-bold text-indigo-400/80 mb-1 block">Available Variables</label>
-                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                    <div className="bg-indigo-50 dark:bg-indigo-500/5 p-2 rounded-lg border border-indigo-100 dark:border-indigo-500/10">
+                        <label className="text-[10px] uppercase font-bold text-indigo-500 dark:text-indigo-400/80 mb-1 block">Available Variables</label>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
                             Request data is automatically available in:
                         </p>
                         <div className="flex gap-2 mt-1.5 font-mono text-[10px]">
-                            <span className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300">{`$body`}</span>
-                            <span className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300">{`$query`}</span>
-                            <span className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300">{`$params`}</span>
+                            <span className="bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-300 border border-indigo-100 dark:border-transparent shadow-sm dark:shadow-none">{`$body`}</span>
+                            <span className="bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-300 border border-indigo-100 dark:border-transparent shadow-sm dark:shadow-none">{`$query`}</span>
+                            <span className="bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-300 border border-indigo-100 dark:border-transparent shadow-sm dark:shadow-none">{`$params`}</span>
                         </div>
                         {/* Show extracted path params if any */}
                         {path.includes(':') && (
@@ -192,9 +191,9 @@ export function ApiNode({ id, data }: { id: string, data: any }) {
 
                     {/* Body Validation Section */}
                     {(method === 'POST' || method === 'PUT' || method === 'PATCH') && (
-                        <div className="mt-4 pt-4 border-t border-slate-800">
+                        <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
                             <label className="text-[10px] uppercase font-bold text-slate-500 mb-2 block">Body Validation Schema</label>
-                            <div className="bg-slate-950/30 rounded-lg p-2 border border-slate-800/50">
+                            <div className="bg-slate-50 dark:bg-slate-950/30 rounded-lg p-2 border border-slate-200 dark:border-slate-800/50">
                                 <SchemaEditor
                                     nodeId={id}
                                     fields={validationFields}
@@ -208,11 +207,11 @@ export function ApiNode({ id, data }: { id: string, data: any }) {
             )}
 
             {/* Footer / Status */}
-            <div className="bg-slate-950/50 p-2 rounded-b-xl border-t border-slate-800 flex items-center justify-between">
+            <div className="bg-slate-50 dark:bg-slate-950/50 p-2 rounded-b-xl border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
                 <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Trigger</span>
                 <div className="flex items-center gap-1.5">
                     <span className={`w-1.5 h-1.5 rounded-full ${validation?.valid === false ? 'bg-red-500' : 'bg-green-500 animate-pulse'}`} />
-                    <span className={`text-[10px] font-medium ${validation?.valid === false ? 'text-red-400' : 'text-green-400'}`}>
+                    <span className={`text-[10px] font-medium ${validation?.valid === false ? 'text-red-500 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
                         {validation?.valid === false ? 'Conflict' : 'Active'}
                     </span>
                 </div>
