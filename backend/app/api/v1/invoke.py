@@ -4,24 +4,44 @@ from sqlalchemy.future import select
 from app.core.database import get_db
 from app.models.workflow import Workflow
 from app.services.workflow_runner import WorkflowExecutor
-from typing import Optional
-import json
+import re
 
 router = APIRouter()
+
+def match_path(node_path: str, request_path: str) -> tuple[bool, dict]:
+    """
+    Matches generic path (e.g. users/:id) with request path (e.g. users/123).
+    Returns (True, {id: 123}) if matched.
+    """
+    # Normalize
+    n_parts = [p for p in node_path.strip('/').split('/') if p]
+    r_parts = [p for p in request_path.strip('/').split('/') if p]
+    
+    if len(n_parts) != len(r_parts):
+        return False, {}
+    
+    params = {}
+    
+    for n, r in zip(n_parts, r_parts):
+        if n.startswith(':'):
+            # Param
+            key = n[1:]
+            params[key] = r
+        elif n != r:
+            return False, {}
+            
+    return True, params
 
 @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depends(get_db)):
     # 1. Fetch all workflows
-    # Ideally we should filter in DB, but JSON filtering is DB-specific.
-    # For MVP, fetch all and filter in memory.
     result = await db.execute(select(Workflow))
     workflows = result.scalars().all()
     
     matched_workflow = None
+    extracted_params = {}
     
-    # 2. Find matching workflow based on API Node configuration
-    matched_params = {}
-    
+    # 2. Find matching workflow
     for workflow in workflows:
         if not workflow.nodes:
             continue
@@ -30,39 +50,19 @@ async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depend
         for node in workflow.nodes:
             if node.get('type') == 'api':
                 data = node.get('data', {})
+                node_path = data.get('path', '/').strip('/')
                 node_method = data.get('method', 'GET').upper()
                 request_method = request.method.upper()
                 
+                # Method Check
                 if node_method != request_method:
                     continue
-
-                # Path Matching Logic
-                node_path_raw = data.get('path', '/').strip('/')
-                input_path_raw = path.strip('/')
                 
-                # Robust splitting and stripping
-                node_parts = [p.strip() for p in node_path_raw.split('/') if p.strip()]
-                input_parts = [p.strip() for p in input_path_raw.split('/') if p.strip()]
-                
-                if len(node_parts) != len(input_parts):
-                    continue
-                
-                is_match = True
-                current_params = {}
-                
-                for i, part in enumerate(node_parts):
-                    if part.startswith(':'):
-                        # Capture param
-                        param_name = part[1:].strip()
-                        current_params[param_name] = input_parts[i]
-                    elif part != input_parts[i]:
-                        is_match = False
-                        break
-                
+                # Path Check
+                is_match, params = match_path(node_path, path)
                 if is_match:
                     matched_workflow = workflow
-                    matched_params = current_params
-                    matched_node_id = node.get('id')
+                    extracted_params = params
                     break
         if matched_workflow:
             break
@@ -70,7 +70,7 @@ async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depend
     if not matched_workflow:
         raise HTTPException(status_code=404, detail=f"No workflow found for {request.method} /{path}")
 
-    # 3. Parse Body if present
+    # 3. Parse Body
     body_data = {}
     if request.method in ["POST", "PUT", "PATCH"]:
         try:
@@ -78,19 +78,15 @@ async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depend
         except:
             body_data = {}
             
-    # Prepare input data with structured context
-    # Merge extracted params with any existing path params
-    final_params = dict(request.path_params)
-    final_params.update(matched_params)
-    
+    # Prepare input data
     input_data = {
         "body": body_data,
         "query": dict(request.query_params),
-        "params": final_params,
+        "params": {**dict(request.path_params), **extracted_params}, # Merge FastAPI params with our extracted params
         "headers": dict(request.headers),
         "method": request.method,
         "path": path,
-        "start_node_id": matched_node_id
+        "user": None # Auth not yet implemented in node context, but good placeholder
     }
 
     # 4. Run Workflow
@@ -99,13 +95,16 @@ async def invoke_workflow(path: str, request: Request, db: AsyncSession = Depend
         "edges": [e for e in matched_workflow.edges if e]
     }
     
-    executor = WorkflowExecutor(workflow_data)
-    result = await executor.run(input_data, db_session=db, user_id=matched_workflow.user_id)
+    # Pass DB Session!
+    executor = WorkflowExecutor(workflow_data, db_session=db)
+    result = await executor.run(input_data)
     
     # 5. Return Result
-    # Unwrap response if it fits standard structure
     if result.get('status') == 'success' and 'response' in result:
         return result['response']
-    
-    # Or return full execution result for debugging if no direct response
+
+    # If error or no specific response, return result (for debug) or error
+    if result.get('status') == 'error':
+         raise HTTPException(status_code=500, detail=result.get('error'))
+         
     return result

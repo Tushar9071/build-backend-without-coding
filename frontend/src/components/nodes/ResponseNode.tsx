@@ -87,7 +87,9 @@ export function ResponseNode({ id, data }: { id: string, data: any }) {
                                     setStatusCode(val);
                                     data.statusCode = val;
                                 }}
-                                className="w-20 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 font-mono"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                className="nodrag nowheel w-20 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 font-mono"
                             />
                             <div className={`flex-1 flex items-center px-3 rounded-lg border text-xs font-medium ${getStatusColor(statusCode)}`}>
                                 {statusCode >= 200 && statusCode < 300 && <CheckCircle className="w-3.5 h-3.5 mr-2" />}

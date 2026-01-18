@@ -1,14 +1,12 @@
-
-
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { MainLayout } from './components/layout/MainLayout';
 import Dashboard from './pages/Dashboard';
-import ApiBuilder from './pages/ApiBuilder';
 import WorkflowBuilder from './pages/WorkflowBuilder';
 import DatabaseManager from './pages/DatabaseManager';
 import Runner from './pages/Runner';
 import Settings from './pages/Settings';
 import Workflows from './pages/Workflows';
+import Projects from './pages/Projects';
 import Login from './pages/Login';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster } from 'react-hot-toast';
@@ -56,8 +54,12 @@ function AppContent() {
 
         <Route path="/" element={<RequireAuth><MainLayout /></RequireAuth>}>
           <Route index element={<Dashboard />} />
-          <Route path="api-builder" element={<ApiBuilder />} />
-          <Route path="workflows" element={<Workflows />} />
+          <Route path="projects" element={<Projects />} />
+          <Route path="routes" element={<Workflows category="route" title="API Routes" description="Manage your public API endpoints." />} />
+          <Route path="functions" element={<Workflows category="function" title="Functions" description="Reusable business logic and internal functions." />} />
+          <Route path="schemas" element={<Workflows category="interface" title="Interfaces" description="Data validation schemas and types." />} />
+
+          <Route path="workflows" element={<Navigate to="/projects" replace />} />
           <Route path="workflows/:id" element={<WorkflowBuilder />} />
           <Route path="database" element={<DatabaseManager />} />
           <Route path="runner" element={<Runner />} />

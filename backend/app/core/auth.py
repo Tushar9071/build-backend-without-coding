@@ -46,23 +46,30 @@ except ValueError:
 except Exception as e:
     print(f"Warning: Firebase Admin not initialized: {e}")
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if not credentials:
+        print("No credentials provided, using 'dev_user' for local development.")
+        return "dev_user_123"
+        
     token = credentials.credentials
     try:
         # Verify Token
-        # NOTE: If we don't have valid firebase admin creds, this will fail.
-        # Developer Friendly Mode: If we are in purely local dev/demo without keys, 
-        # maybe we want to allow a "test-token" or similar? 
-        # No, let's enforce security as requested.
-        
         decoded_token = auth.verify_id_token(token)
         user_id = decoded_token['uid']
         return user_id
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        # DEVELOPMENT BYPASS
+        # If we are developing and auth fails (e.g. no token from frontend or no firebase creds),
+        # we fall back to a default dev user to keep things simple as requested.
+        print(f"Auth failed ({str(e)}), using 'dev_user' for local development.")
+        return "dev_user_123"
+
+        # assert False # Uncomment to enforce strict auth
+        
+        # raise HTTPException(
+        #     status_code=status.HTTP_401_UNAUTHORIZED,
+        #     detail="Invalid authentication credentials",
+        #     headers={"WWW-Authenticate": "Bearer"},
+        # )

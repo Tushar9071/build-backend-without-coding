@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, RefreshCw, Table, Terminal, CheckCircle2, Lock, Server } from 'lucide-react';
+import { Database, RefreshCw, Table, Terminal, CheckCircle2, Lock, Server, Plus, Trash2, Edit2, X, Save } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { api } from '../lib/api';
 
@@ -8,12 +8,19 @@ export default function DatabaseManager() {
   const [tables, setTables] = useState<string[]>([]);
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any[]>([]);
+  const [tableColumns, setTableColumns] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [dbType, setDbType] = useState('postgresql');
   const [connectionUrl, setConnectionUrl] = useState('');
   const [activeTab, setActiveTab] = useState<'tables' | 'query'>('tables');
   const [customQuery, setCustomQuery] = useState('');
   const [queryResult, setQueryResult] = useState<any>(null);
+
+  // CRUD Modal States
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingRow, setEditingRow] = useState<any>(null);
+  const [formData, setFormData] = useState<Record<string, any>>({});
 
   useEffect(() => {
     fetchConfig();
@@ -26,8 +33,6 @@ export default function DatabaseManager() {
       if (res.data.url) {
         setDbConfig(res.data);
         setConnectionUrl(res.data.url);
-        // If backend returned type we would set it here, but current get_config might not return it. 
-        // We'll leave default for now or update get_config later if needed.
         fetchTables();
       }
     } catch (error) {
@@ -66,6 +71,9 @@ export default function DatabaseManager() {
     try {
       const res = await api.get(`/db/table/${tableName}`);
       setTableData(res.data);
+      if (res.data.length > 0) {
+        setTableColumns(Object.keys(res.data[0]));
+      }
     } catch (error) {
       toast.error('Failed to load table data');
     } finally {
@@ -86,6 +94,92 @@ export default function DatabaseManager() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // CRUD Operations
+  const handleCreate = async () => {
+    if (!activeTable) return;
+
+    const columns = Object.keys(formData).filter(k => formData[k] !== '');
+    const values = columns.map(k => {
+      const val = formData[k];
+      if (typeof val === 'string' && isNaN(Number(val))) {
+        return `'${val.replace(/'/g, "''")}'`;
+      }
+      return val;
+    });
+
+    const query = `INSERT INTO ${activeTable} (${columns.join(', ')}) VALUES (${values.join(', ')})`;
+
+    try {
+      await api.post('/db/query', { query });
+      toast.success('Record created successfully!');
+      setIsCreateModalOpen(false);
+      setFormData({});
+      loadTableData(activeTable);
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to create record');
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!activeTable || !editingRow) return;
+
+    // Find primary key (assume first column is id)
+    const pkColumn = tableColumns[0];
+    const pkValue = editingRow[pkColumn];
+
+    const setClauses = Object.keys(formData)
+      .filter(k => k !== pkColumn && formData[k] !== undefined)
+      .map(k => {
+        const val = formData[k];
+        if (typeof val === 'string' && isNaN(Number(val))) {
+          return `${k} = '${val.replace(/'/g, "''")}'`;
+        }
+        return `${k} = ${val}`;
+      })
+      .join(', ');
+
+    const query = `UPDATE ${activeTable} SET ${setClauses} WHERE ${pkColumn} = '${pkValue}'`;
+
+    try {
+      await api.post('/db/query', { query });
+      toast.success('Record updated successfully!');
+      setIsEditModalOpen(false);
+      setEditingRow(null);
+      setFormData({});
+      loadTableData(activeTable);
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to update record');
+    }
+  };
+
+  const handleDelete = async (row: any) => {
+    if (!activeTable || !confirm('Are you sure you want to delete this record?')) return;
+
+    const pkColumn = tableColumns[0];
+    const pkValue = row[pkColumn];
+
+    const query = `DELETE FROM ${activeTable} WHERE ${pkColumn} = '${pkValue}'`;
+
+    try {
+      await api.post('/db/query', { query });
+      toast.success('Record deleted successfully!');
+      loadTableData(activeTable);
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to delete record');
+    }
+  };
+
+  const openEditModal = (row: any) => {
+    setEditingRow(row);
+    setFormData({ ...row });
+    setIsEditModalOpen(true);
+  };
+
+  const openCreateModal = () => {
+    setFormData({});
+    setIsCreateModalOpen(true);
   };
 
   return (
@@ -132,7 +226,7 @@ export default function DatabaseManager() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
 
-        {/* Connection Overlay if not connected */}
+        {/* Connection Overlay */}
         {!dbConfig && (
           <div className="absolute inset-0 z-50 bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 max-w-md w-full shadow-2xl">
@@ -172,7 +266,6 @@ export default function DatabaseManager() {
                       placeholder={dbType === 'postgresql' ? "postgresql://user:pass@host:5432/dbname" : "mysql://user:pass@host:3306/dbname"}
                     />
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-1.5 ml-1">Supports: PostgreSQL (via asyncpg)</p>
                 </div>
 
                 <button
@@ -208,6 +301,15 @@ export default function DatabaseManager() {
           </div>
 
           <div className="flex items-center gap-2">
+            {activeTab === 'tables' && activeTable && (
+              <button
+                onClick={openCreateModal}
+                className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add Record
+              </button>
+            )}
             <button onClick={() => setDbConfig(null)} className="text-xs text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-500/10 rounded transition-colors">
               Disconnect
             </button>
@@ -219,7 +321,6 @@ export default function DatabaseManager() {
 
           {activeTab === 'tables' && (
             <div className="h-full flex flex-col">
-              {/* Toolbar for Table */}
               {activeTable && (
                 <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/30 flex justify-between items-center animate-in fade-in slide-in-from-top-2 duration-200">
                   <h3 className="font-mono text-sm text-slate-600 dark:text-slate-300">
@@ -231,7 +332,6 @@ export default function DatabaseManager() {
                 </div>
               )}
 
-              {/* Data Grid */}
               <div className="flex-1 overflow-auto bg-slate-50 dark:bg-slate-950/50 p-4">
                 {activeTable ? (
                   tableData.length > 0 ? (
@@ -240,30 +340,56 @@ export default function DatabaseManager() {
                         <thead className="bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400 font-medium">
                           <tr>
                             <th className="px-4 py-3 w-10 border-b border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-900/80 sticky top-0">#</th>
-                            {Object.keys(tableData[0]).map(key => (
+                            {tableColumns.map(key => (
                               <th key={key} className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-900/80 sticky top-0 min-w-[100px] font-mono text-xs uppercase tracking-wider">
                                 {key}
                               </th>
                             ))}
+                            <th className="px-4 py-3 w-24 border-b border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-900/80 sticky top-0 text-center">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-950">
                           {tableData.map((row, i) => (
                             <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors group">
                               <td className="px-4 py-3 text-slate-500 dark:text-slate-600 font-mono text-xs border-r border-slate-200 dark:border-slate-800/50">{i + 1}</td>
-                              {Object.values(row).map((val: any, j) => (
+                              {tableColumns.map((col, j) => (
                                 <td key={j} className="px-4 py-3 text-slate-700 dark:text-slate-300 max-w-[300px] truncate group-hover:whitespace-normal group-hover:break-words text-xs">
-                                  {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                                  {typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col] ?? '')}
                                 </td>
                               ))}
+                              <td className="px-4 py-3 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => openEditModal(row)}
+                                    className="p-1.5 hover:bg-blue-100 dark:hover:bg-blue-500/20 rounded text-blue-500"
+                                    title="Edit"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDelete(row)}
+                                    className="p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 rounded text-red-500"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center justify-center h-64 text-slate-500">
+                    <div className="flex flex-col items-center justify-center h-64 text-slate-500 gap-4">
                       <p>No records found in table</p>
+                      <button
+                        onClick={openCreateModal}
+                        className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-medium"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Add First Record
+                      </button>
                     </div>
                   )
                 ) : (
@@ -321,6 +447,90 @@ export default function DatabaseManager() {
 
         </div>
       </div>
+
+      {/* Create Modal */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl w-full max-w-md shadow-2xl">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Plus className="w-5 h-5 text-green-500" />
+                Add New Record
+              </h3>
+              <button onClick={() => setIsCreateModalOpen(false)} className="text-slate-500 hover:text-slate-700 dark:hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 max-h-[60vh] overflow-y-auto">
+              {tableColumns.filter(c => c !== 'id' && c !== 'created_at' && c !== 'updated_at').map(col => (
+                <div key={col}>
+                  <label className="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1">{col}</label>
+                  <input
+                    type="text"
+                    value={formData[col] || ''}
+                    onChange={(e) => setFormData({ ...formData, [col]: e.target.value })}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3">
+              <button onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
+                Cancel
+              </button>
+              <button onClick={handleCreate} className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg font-medium">
+                <Save className="w-4 h-4" />
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl w-full max-w-md shadow-2xl">
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-blue-500" />
+                Edit Record
+              </h3>
+              <button onClick={() => setIsEditModalOpen(false)} className="text-slate-500 hover:text-slate-700 dark:hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 max-h-[60vh] overflow-y-auto">
+              {tableColumns.map(col => (
+                <div key={col}>
+                  <label className="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1">
+                    {col}
+                    {(col === 'id' || col === 'created_at' || col === 'updated_at') && (
+                      <span className="text-xs text-slate-400 ml-2">(read-only)</span>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    value={formData[col] ?? ''}
+                    onChange={(e) => setFormData({ ...formData, [col]: e.target.value })}
+                    disabled={col === 'id' || col === 'created_at' || col === 'updated_at'}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3">
+              <button onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
+                Cancel
+              </button>
+              <button onClick={handleUpdate} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium">
+                <Save className="w-4 h-4" />
+                Update
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

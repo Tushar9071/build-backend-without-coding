@@ -157,6 +157,28 @@ export function useAvailableVariables(currentNodeId: string) {
         vars.push({ name: 'query', type: 'object', nodeType: 'Context' });
         vars.push({ name: 'params', type: 'object', nodeType: 'Context' });
         vars.push({ name: 'request', type: 'object', nodeType: 'Context' });
+        vars.push({ name: 'user', type: 'object', nodeType: 'Context' });
+        vars.push({ name: 'func_result', type: 'any', nodeType: 'Function' });
+
+        // Add Database Node results
+        nodes.forEach(node => {
+            if (node.type === 'database' && node.data?.resultVar) {
+                vars.push({ name: node.data.resultVar as string, type: 'any', nodeType: 'Database' });
+            }
+            if (node.type === 'code' && node.data?.resultVar) {
+                vars.push({ name: node.data.resultVar as string, type: 'any', nodeType: 'Code' });
+            }
+            if (node.type === 'subworkflow') {
+                vars.push({ name: 'func_result', type: 'any', nodeType: 'Function Call' });
+            }
+            // Function Start node parameters
+            if (node.type === 'function_start' && node.data?.parameters) {
+                const params = node.data.parameters as Array<{ name: string; type: string }>;
+                params.forEach(p => {
+                    vars.push({ name: p.name, type: p.type || 'any', nodeType: 'Function Param' });
+                });
+            }
+        });
 
         // Remove duplicates (by name)
         const uniqueVars = new Map();

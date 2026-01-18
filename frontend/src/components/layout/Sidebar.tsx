@@ -1,14 +1,22 @@
 import { useState } from 'react';
-import { LayoutDashboard, Network, Workflow, Database, Settings, Play, Sun, Moon, ChevronLeft, ChevronRight, Menu } from 'lucide-react';
+import { LayoutDashboard, Network, Workflow, Database, Settings, Play, Sun, Moon, ChevronLeft, ChevronRight, Menu, FileJson, Folder } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useThemeStore } from '../../store/themeStore';
 
-const navItems = [
+const coreItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
-  { icon: Network, label: 'API Builder', path: '/api-builder' },
-  { icon: Workflow, label: 'Workflows', path: '/workflows' },
+  { icon: Folder, label: 'Projects', path: '/projects' },
+];
+
+const projectItems = [
+  { icon: Network, label: 'API Routes', path: '/routes' },
+  { icon: Workflow, label: 'Functions', path: '/functions' },
+  { icon: FileJson, label: 'Interfaces', path: '/schemas' },
   { icon: Database, label: 'Database', path: '/database' },
+];
+
+const bottomItems = [
   { icon: Play, label: 'Runner', path: '/runner' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
@@ -18,9 +26,39 @@ export function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
+  // Helper to render links
+  const renderLink = (item: any) => (
+    <NavLink
+      key={item.path}
+      to={item.path}
+      title={isCollapsed ? item.label : undefined}
+      className={({ isActive }) =>
+        cn(
+          "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative",
+          isActive
+            ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow-[0_0_20px_rgba(99,102,241,0.15)]"
+            : "hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white",
+          isCollapsed ? "justify-center px-2" : ""
+        )
+      }
+    >
+      <item.icon className={cn("w-5 h-5 transition-colors min-w-[20px]")} />
+
+      {!isCollapsed && (
+        <span className="font-medium text-sm text-nowrap overflow-hidden">{item.label}</span>
+      )}
+
+      {/* Tooltip for collapsed mode */}
+      {isCollapsed && (
+        <div className="absolute left-full ml-4 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 border border-slate-700">
+          {item.label}
+        </div>
+      )}
+    </NavLink>
+  );
+
   return (
     <>
-      {/* Mobile Menu Button */}
       <button
         className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-slate-900 text-white rounded-md shadow-lg"
         onClick={() => setIsMobileOpen(!isMobileOpen)}
@@ -28,7 +66,6 @@ export function Sidebar() {
         <Menu className="w-5 h-5" />
       </button>
 
-      {/* Mobile Overlay */}
       {isMobileOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
@@ -39,14 +76,11 @@ export function Sidebar() {
       <aside className={cn(
         "fixed lg:static inset-y-0 left-0 z-50 bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 flex flex-col h-screen transition-all duration-300 ease-in-out",
         isCollapsed ? "w-20" : "w-64",
-        // Mobile behavior: slide in/out
         isMobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
-        // On mobile, if open, width is always 64
         "lg:translate-x-0",
         isMobileOpen && "w-64"
       )}>
 
-        {/* Toggle Button (Desktop Only) */}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
           className="hidden lg:flex absolute -right-3 top-8 bg-slate-900 border border-slate-700 text-slate-400 hover:text-white rounded-full p-1 shadow-xl z-50"
@@ -54,7 +88,6 @@ export function Sidebar() {
           {isCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
         </button>
 
-        {/* Logo Section */}
         <div className={cn("p-6 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2", isCollapsed ? "justify-center p-4" : "")}>
           <div className="w-8 h-8 min-w-[32px] rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
             <Network className="text-white w-5 h-5" />
@@ -66,37 +99,31 @@ export function Sidebar() {
           )}
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 p-2 space-y-2 mt-4">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              title={isCollapsed ? item.label : undefined}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative",
-                  isActive
-                    ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow-[0_0_20px_rgba(99,102,241,0.15)]"
-                    : "hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white",
-                  isCollapsed ? "justify-center px-2" : ""
-                )
-              }
-            >
-              <item.icon className={cn("w-5 h-5 transition-colors min-w-[20px]")} />
+        <nav className="flex-1 p-2 space-y-6 mt-4 overflow-y-auto scrollbar-hide">
+          {/* Core */}
+          <div className="space-y-1">
+            {coreItems.map(renderLink)}
+          </div>
 
-              {!isCollapsed && (
-                <span className="font-medium text-sm text-nowrap overflow-hidden">{item.label}</span>
-              )}
+          {/* Project Items */}
+          <div className="space-y-2">
+            {!isCollapsed && (
+              <div className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                <span>Active Project</span>
+                <span className="bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded text-[10px]">v1</span>
+              </div>
+            )}
+            <div className="space-y-1">
+              {projectItems.map(renderLink)}
+            </div>
+          </div>
 
-              {/* Tooltip for collapsed mode */}
-              {isCollapsed && (
-                <div className="absolute left-full ml-4 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 border border-slate-700">
-                  {item.label}
-                </div>
-              )}
-            </NavLink>
-          ))}
+          {/* Bottom / Tools */}
+          <div className="space-y-1">
+            {!isCollapsed && <div className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider mt-4">Tools</div>}
+            {bottomItems.map(renderLink)}
+          </div>
+
         </nav>
 
         {/* Footer Section */}

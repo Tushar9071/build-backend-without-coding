@@ -82,6 +82,8 @@ async def update_workflow(workflow_id: str, workflow_update: WorkflowBase, db: A
         workflow.nodes = workflow_update.nodes
     if workflow_update.edges is not None:
         workflow.edges = workflow_update.edges
+    if workflow_update.category is not None:
+        workflow.category = workflow_update.category
 
     await db.commit()
     await db.refresh(workflow)
@@ -113,8 +115,11 @@ async def run_workflow(workflow_id: str, input_data: dict, db: AsyncSession = De
         "edges": [e for e in workflow.edges if e]
     }
     
+    # Inject user info into input data
+    input_data['user'] = {'id': user_id}
+    
     from app.services.workflow_runner import WorkflowExecutor
-    executor = WorkflowExecutor(workflow_data)
-    result = await executor.run(input_data, db_session=db, user_id=user_id)
+    executor = WorkflowExecutor(workflow_data, db_session=db)
+    result = await executor.run(input_data)
     
     return result

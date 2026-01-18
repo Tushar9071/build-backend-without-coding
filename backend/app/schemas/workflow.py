@@ -8,9 +8,10 @@ class WorkflowBase(BaseModel):
     description: Optional[str] = None
     nodes: List[Dict[str, Any]] = []
     edges: List[Dict[str, Any]] = []
+    category: Optional[str] = None  # Don't default to route - preserve existing value
 
 class WorkflowCreate(WorkflowBase):
-    pass
+    category: str = "route"  # Default for new workflows
 
 class WorkflowResponse(WorkflowBase):
     id: UUID

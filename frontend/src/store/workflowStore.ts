@@ -10,6 +10,7 @@ export interface Workflow {
   edges: Edge[];
   updated_at?: string;
   description?: string;
+  category?: string;
 }
 
 interface WorkflowState {
@@ -19,7 +20,7 @@ interface WorkflowState {
   error: string | null;
 
   fetchWorkflows: () => Promise<void>;
-  createWorkflow: (name: string) => Promise<void>;
+  createWorkflow: (name: string, category?: string) => Promise<void>;
   loadWorkflow: (id: string) => Promise<void>;
   saveWorkflow: (id: string, nodes: Node[], edges: Edge[]) => Promise<void>;
   updateWorkflow: (id: string, data: Partial<Workflow>) => Promise<void>;
@@ -57,11 +58,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  createWorkflow: async (name: string) => {
+  createWorkflow: async (name: string, category: string = 'route') => {
     set({ isLoading: true });
     try {
       const response = await api.post(endpoints.workflows.create, {
         name,
+        category,
         nodes: [],
         edges: []
       });
@@ -156,31 +158,31 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ isLoading: true });
     try {
       const response = await api.post(endpoints.github.deploy, {
-         workflow_id: id,
-         github_token: token,
-         repo_name: repoName
+        workflow_id: id,
+        github_token: token,
+        repo_name: repoName
       });
       toast.success('Deployed successfully!');
       return response.data;
     } catch (error: any) {
-        toast.error('Deployment failed: ' + (error.response?.data?.detail || error.message));
-        throw error;
+      toast.error('Deployment failed: ' + (error.response?.data?.detail || error.message));
+      throw error;
     } finally {
-        set({ isLoading: false });
+      set({ isLoading: false });
     }
   },
 
   downloadWorkflowCode: async (id) => {
     try {
-        const url = `${api.defaults.baseURL}${endpoints.github.download(id)}`;
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `workflow-${id}.zip`);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+      const url = `${api.defaults.baseURL}${endpoints.github.download(id)}`;
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `workflow-${id}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
     } catch (error: any) {
-        toast.error('Download failed');
+      toast.error('Download failed');
     }
   }
 }));

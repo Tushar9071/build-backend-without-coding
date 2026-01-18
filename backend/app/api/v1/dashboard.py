@@ -6,22 +6,31 @@ import random
 from datetime import datetime, timedelta
 
 from app.core.database import get_db
-from app.models.workflow import APIEndpoint, DatabaseConnection
+from app.models.workflow import Workflow, DatabaseConnection
 from app.schemas.dashboard import DashboardStats, ActivityItem
+from app.core.auth import get_current_user
 
 router = APIRouter()
 
 @router.get("/stats", response_model=DashboardStats)
-async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
-    # Count active endpoints
-    result_endpoints = await db.execute(select(func.count(APIEndpoint.id)))
+async def get_dashboard_stats(db: AsyncSession = Depends(get_db), current_user: str = Depends(get_current_user)):
+    # Count active endpoints (Workflows of category 'route')
+    result_endpoints = await db.execute(
+        select(func.count(Workflow.id))
+        .filter(Workflow.user_id == current_user)
+        .filter(Workflow.category == 'route')
+    )
     active_endpoints_count = result_endpoints.scalar() or 0
 
     # Count DB connections
-    result_db = await db.execute(select(func.count(DatabaseConnection.id)))
+    result_db = await db.execute(
+        select(func.count(DatabaseConnection.id))
+        .filter(DatabaseConnection.user_id == current_user)
+    )
     db_connections_count = result_db.scalar() or 0
 
     # Mock avg latency and activities for now
+    # TODO: Implement real request logging middleware to populate a 'RequestLog' table
     mock_activities = []
     methods = ["GET", "POST", "PUT", "DELETE"]
     endpoints_list = ["/api/v1/users", "/api/v1/products", "/api/v1/auth/login", "/api/v1/orders"]

@@ -17,25 +17,35 @@ export function SuggestionInput({ nodeId, value, onValueChange, className, ...pr
     const variables = useAvailableVariables(nodeId);
 
     // Filter variables based on current search term (if check matches)
-    // Logic: find the last occurrence of '$' before cursor.
-    // If found, and no spaces/special chars after it that would break a var name, we suggest.
-    // Simpler: Find last '$'
-    const getSearchTerm = () => {
+    // Now support both '$' and '{' as trigger characters
+    const getSearchTerm = (): { term: string; trigger: '$' | '{' } | null => {
         const textBeforeCursor = value.substring(0, cursorPosition);
-        const lastTrigger = textBeforeCursor.lastIndexOf('$');
+        const lastDollar = textBeforeCursor.lastIndexOf('$');
+        const lastBrace = textBeforeCursor.lastIndexOf('{');
 
-        if (lastTrigger !== -1) {
-            // Check if we are "inside" a potential variable name
-            // (e.g. no spaces after the $)
-            const textAfterTrigger = textBeforeCursor.substring(lastTrigger + 1);
-            if (!/\s/.test(textAfterTrigger)) {
-                return textAfterTrigger;
-            }
+        // Find which trigger is closer to cursor
+        const lastTriggerPos = Math.max(lastDollar, lastBrace);
+        if (lastTriggerPos === -1) return null;
+
+        const trigger = lastTriggerPos === lastDollar ? '$' : '{';
+        const textAfterTrigger = textBeforeCursor.substring(lastTriggerPos + 1);
+
+        // For {, check if we're still inside (no closing })
+        if (trigger === '{') {
+            const closeBrace = textAfterTrigger.indexOf('}');
+            if (closeBrace !== -1) return null; // Already closed
         }
+
+        // Check if we are "inside" a potential variable name (no spaces)
+        if (!/\s/.test(textAfterTrigger)) {
+            return { term: textAfterTrigger, trigger };
+        }
+
         return null;
     };
 
-    const searchTerm = getSearchTerm();
+    const searchResult = getSearchTerm();
+    const searchTerm = searchResult?.term ?? null;
 
     const filteredVariables = searchTerm !== null
         ? variables.filter(v => v.name.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -53,24 +63,35 @@ export function SuggestionInput({ nodeId, value, onValueChange, className, ...pr
         const textBeforeCursor = value.substring(0, cursorPosition);
         const textAfterCursor = value.substring(cursorPosition);
 
-        const lastTrigger = textBeforeCursor.lastIndexOf('$');
-        if (lastTrigger !== -1) {
-            const prePart = textBeforeCursor.substring(0, lastTrigger);
-            // Insert format: $variableName
-            // Note: If backend expects {variableName}, we might need to adjust, 
-            // but user specifically asked for $variable_name. 
-            // We will insert `$variableName`. 
-            // If backend needs {}, we might need to change it there or invoke wrapper logic.
-            // For now, adhere to user request: Use $
+        const result = getSearchTerm();
+        if (!result) return;
 
-            const newValue = `${prePart}$${varName}${textAfterCursor}`;
+        const { trigger } = result;
+        const lastTriggerPos = trigger === '$'
+            ? textBeforeCursor.lastIndexOf('$')
+            : textBeforeCursor.lastIndexOf('{');
+
+        if (lastTriggerPos !== -1) {
+            const prePart = textBeforeCursor.substring(0, lastTriggerPos);
+
+            // Insert format based on trigger
+            let newValue: string;
+            let newPos: number;
+
+            if (trigger === '$') {
+                newValue = `${prePart}$${varName}${textAfterCursor}`;
+                newPos = prePart.length + varName.length + 1;
+            } else {
+                newValue = `${prePart}{${varName}}${textAfterCursor}`;
+                newPos = prePart.length + varName.length + 2;
+            }
+
             onValueChange(newValue);
             setIsOpen(false);
 
             // Move cursor to end of inserted variable
             setTimeout(() => {
                 if (inputRef.current) {
-                    const newPos = prePart.length + varName.length + 1; // +1 for $
                     inputRef.current.setSelectionRange(newPos, newPos);
                     inputRef.current.focus();
                 }
@@ -103,7 +124,11 @@ export function SuggestionInput({ nodeId, value, onValueChange, className, ...pr
     }
 
     return (
-        <div className="relative w-full">
+        <div
+            className="relative w-full"
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+        >
             <input
                 ref={inputRef}
                 type="text"
@@ -113,8 +138,11 @@ export function SuggestionInput({ nodeId, value, onValueChange, className, ...pr
                     setCursorPosition(e.target.selectionStart || 0);
                 }}
                 onClick={(e) => {
+                    e.stopPropagation();
                     setCursorPosition(e.currentTarget.selectionStart || 0);
                 }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
                 onKeyUp={(e) => {
                     setCursorPosition(e.currentTarget.selectionStart || 0);
                 }}
@@ -129,6 +157,9 @@ export function SuggestionInput({ nodeId, value, onValueChange, className, ...pr
                     ref={dropdownRef}
                     className="absolute left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto bg-slate-900 border border-slate-700 rounded-md shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none"
                     style={{ top: '100%' }}
+                    onWheel={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
                 >
                     <div className="py-1">
                         <div className='px-2 py-1 text-[10px] text-slate-500 font-bold uppercase border-b border-slate-800 bg-slate-950'>

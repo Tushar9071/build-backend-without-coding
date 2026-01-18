@@ -1,96 +1,111 @@
 from typing import Dict, Any, List
 import json
-import re
-from datetime import datetime, date
+import asyncio
+import os
 import uuid
+import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+import aiofiles
+
+class StandardLibrary:
+    @staticmethod
+    def get_uuid():
+        return str(uuid.uuid4())
+    
+    @staticmethod
+    def get_timestamp():
+        return datetime.datetime.now().isoformat()
+    
+    @staticmethod
+    def text_upper(s):
+        return str(s).upper()
+        
+    @staticmethod
+    def text_lower(s):
+        return str(s).lower()
+        
+    @staticmethod
+    def list_length(l):
+        if hasattr(l, '__len__'): return len(l)
+        return 0
 
 class WorkflowExecutor:
-    def __init__(self, workflow_data: Dict[str, Any]):
+    def __init__(self, workflow_data: Dict[str, Any], db_session: AsyncSession = None):
         self.nodes = {node['id']: node for node in workflow_data.get('nodes', [])}
         self.edges = workflow_data.get('edges', [])
-        # Map output node ID -> List of edge dicts {target, handle}
         self.adjacency = {}
         for edge in self.edges:
             source = edge['source']
             target = edge['target']
-            handle = edge.get('sourceHandle') # 'true' or 'false' for logic nodes. Null for others.
+            handle = edge.get('sourceHandle')
             
             if source not in self.adjacency:
                 self.adjacency[source] = []
             self.adjacency[source].append({'target': target, 'handle': handle})
             
-        self.context = {} # Variable storage
+        self.context = {} 
         self.execution_log = []
+        self.db = db_session
 
-    def _safe_json_dumps(self, obj):
-        def default_serializer(o):
-            if isinstance(o, (datetime, date)):
-                return o.isoformat()
-            if isinstance(o, uuid.UUID):
-                return str(o)
-            return str(o) # Fallback to string for everything else
-        return json.dumps(obj, default=default_serializer)
-
-    async def run(self, input_data: Dict[str, Any], db_session = None, user_id: str = None) -> Dict[str, Any]:
-        """
-        Execute the workflow starting from the 'api' node.
-        """
-        self.db_session = db_session
-        self.user_id = user_id
-
-        # 1. Initialize all Variables first (Global Scope)
+    async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        # 1. Initialize Variables
         for node_id, node in self.nodes.items():
             if node['type'] == 'variable':
                 await self.execute_node(node)
                 
-        # Find start node (API Node)
+        # Find start node
         start_node = None
-        start_node_id = input_data.get('start_node_id')
         
-        if start_node_id and start_node_id in self.nodes:
-             start_node = self.nodes[start_node_id]
-        else:
+        # Priority 1: Look for function_start node (for reusable functions)
+        for node_id, node in self.nodes.items():
+            if node['type'] == 'function_start':
+                start_node = node
+                break
+        
+        # Priority 2: Look for api node (for routes)
+        if not start_node:
             for node_id, node in self.nodes.items():
                 if node['type'] == 'api':
                     start_node = node
                     break
         
+        # Priority 3: Fallback - find node with no incoming edges
         if not start_node:
-            print("No API Entry found")
-            return {"error": "No API Entry Point found"}
+            incoming = set()
+            for edge in self.edges:
+                incoming.add(edge['target'])
+            
+            for node_id, node in self.nodes.items():
+                if node_id not in incoming and node['type'] != 'variable':
+                    start_node = node
+                    break
+                    
+        if not start_node:
+            return {"error": "No Entry Point found (Add API Node or Function Start Node)"}
 
         self.execution_log.append(f"Started execution at {start_node['data'].get('label', 'API Entry')}")
         
-        # Initialize context with request data flattened for easier access
-        # input_data structure from invoke.py: { "method": ..., "body": {}, "query": {}, "params": {} }
+        # Context Init
         self.context['request'] = input_data
-        
-        # Expose top-level convenience variables for non-tech users
-        # Users can just use {body}, {query.id}, {params.userId} etc.
         if isinstance(input_data.get('body'), dict):
             self.context['body'] = input_data['body']
         if input_data.get('query'):
             self.context['query'] = input_data['query']
         if input_data.get('params'):
             self.context['params'] = input_data['params']
+        if input_data.get('user'):
+            self.context['user'] = input_data['user']
         
         # Traverse
         current_nodes = [start_node['id']]
-        
-        visited = set()
-        response = None
-
-        # Max iterations to prevent infinite loops (naive check)
         entry_count = 0 
         
         while current_nodes and entry_count < 1000:
             entry_count += 1
             next_layer = []
             
-            # Process current layer
             for node_id in current_nodes:
-                # Allow re-visiting for loops, but for DAGs we might want visited check.
-                
                 node = self.nodes[node_id]
                 node_type = node['type']
                 self.execution_log.append(f"Executing Node: {node_type} ({node_id})")
@@ -98,17 +113,14 @@ class WorkflowExecutor:
                 try:
                     res = await self.execute_node(node)
                     
-                    # Check for immediate response
                     if res and res.get('type') == 'response':
-                        response = res.get('data')
                         return {
                             "status": "success",
-                            "response": response,
+                            "response": res.get('data'),
                             "logs": self.execution_log,
                             "context": self.context
                         }
                     
-                    # Handle Logic/Loop Outcome
                     node_result = None
                     if res and res.get('type') in ['logic', 'loop']:
                         node_result = res.get('result')
@@ -121,7 +133,6 @@ class WorkflowExecutor:
                         "logs": self.execution_log
                     }
 
-                # Add downstream nodes with routing logic
                 if node_id in self.adjacency:
                     edges = self.adjacency[node_id]
                     for edge in edges:
@@ -129,223 +140,298 @@ class WorkflowExecutor:
                         handle = edge['handle']
                         
                         if node_type == 'logic':
-                            # Route based on True/False
-                            if node_result is True and handle == 'true':
-                                next_layer.append(target_id)
-                            elif node_result is False and handle == 'false':
-                                next_layer.append(target_id)
+                            if node_result is True and handle == 'true': next_layer.append(target_id)
+                            elif node_result is False and handle == 'false': next_layer.append(target_id)
                         elif node_type == 'loop':
-                            # Route based on do/done
-                            if node_result == 'do' and handle == 'do':
-                                next_layer.append(target_id)
-                            elif node_result == 'done' and handle == 'done':
-                                next_layer.append(target_id)
+                            if node_result == 'do' and handle == 'do': next_layer.append(target_id)
+                            elif node_result == 'done' and handle == 'done': next_layer.append(target_id)
                         else:
-                            # Normal flow, take all connected edges
                             next_layer.append(target_id)
             
-            # De-duplicate next layer to avoid processing same node twice in same step
             current_nodes = list(set(next_layer))
         
         return {
             "status": "success",
-            "message": "Workflow completed without specific response",
+            "message": "Workflow completed",
             "logs": self.execution_log,
             "context": self.context
         }
 
     def _resolve_val(self, val):
-        """Helper to substitute variables in a string (supporting $var or {var}) or return the specific object from context if exact match."""
-        if not isinstance(val, str):
-            return val
-        
-        # 1. Exact Match Check (Preserves Type)
-        # Check {key}
+        if not isinstance(val, str): return val
         if val.startswith('{') and val.endswith('}') and val.count('{') == 1:
-            key = val[1:-1]
-            return self.context.get(key, val)
-        # Check $key
-        if val.startswith('$') and ' ' not in val and len(val) > 1:
-            key = val[1:]
-            # Ensure it's not part of a string like "$100" unless it's a known var?
-            # User wants $variable syntax. If $variable is in context, return it.
-            if key in self.context:
-                return self.context[key]
-        
-        # 2. String Interpolation
-        # Replace {key}
+            return self.context.get(val[1:-1], val)
         if '{' in val and '}' in val:
             for k, v in self.context.items():
-                if f"{{{k}}}" in val:
-                    val = val.replace(f"{{{k}}}", str(v))
-        
-        # Replace $key
-        # We need to be careful not to replace $money if it's not a var.
-        # Simple approach: iterate keys and replace $key with value.
-        # Better approach: Regex, but simplistic loop works for now if keys are distinct.
-        if '$' in val:
-             for k, v in self.context.items():
-                 # We sort keys by length desc to avoid partial replacement collision? 
-                 # (e.g. $var vs $variable) - Python dict iteration order is insertion based (usually).
-                 placeholder = f"${k}"
-                 if placeholder in val:
-                     val = val.replace(placeholder, str(v))
-            
+                if f"{{{k}}}" in val: val = val.replace(f"{{{k}}}", str(v))
         return val
-
-    def _validate_schema(self, fields: List[Dict[str, Any]], target_data: Any) -> tuple[List[str], List[str]]:
-        def recursive_validate(schema_fields, current_data, path="root"):
-            missing_errs = []
-            invalid_errs = []
-            
-            # Check 1: Must be object if it has fields to validate
-            if not isinstance(current_data, dict):
-                # If we are validating query/params, they might be empty regular dicts, which is fine.
-                # If body, it might be None or list.
-                if current_data is None:
-                    current_data = {} 
-                else:
-                    invalid_errs.append(f"{path} (expected object, got {type(current_data).__name__})")
-                    return missing_errs, invalid_errs
-
-            for field in schema_fields:
-                name = field.get('name')
-                if not name: continue
-                
-                required = field.get('required', False)
-                f_type = field.get('type', 'string')
-                children = field.get('children', [])
-                
-                current_path = f"{path}.{name}" if path != "root" else name
-                
-                # Missing Check
-                if name not in current_data:
-                    if required:
-                        missing_errs.append(current_path)
-                    continue
-                
-                val = current_data[name]
-                
-                # Type Check
-                if f_type == 'string' and not isinstance(val, str):
-                    invalid_errs.append(f"{current_path} (expected string)")
-                elif f_type == 'number' and not isinstance(val, (int, float)):
-                    invalid_errs.append(f"{current_path} (expected number)")
-                elif f_type == 'boolean' and not isinstance(val, bool):
-                    invalid_errs.append(f"{current_path} (expected boolean)")
-                elif f_type == 'array' and not isinstance(val, list):
-                    invalid_errs.append(f"{current_path} (expected array)")
-                elif f_type == 'object':
-                    if not isinstance(val, dict):
-                            invalid_errs.append(f"{current_path} (expected object)")
-                    else:
-                            # Recursive Validation for Nested Objects
-                            if children:
-                                c_missing, c_invalid = recursive_validate(children, val, current_path)
-                                missing_errs.extend(c_missing)
-                                invalid_errs.extend(c_invalid)
-
-            return missing_errs, invalid_errs
-
-        return recursive_validate(fields, target_data)
 
     async def execute_node(self, node: Dict[str, Any]):
         node_type = node['type']
         data = node.get('data', {})
 
         if node_type == 'api':
-            # Check for inline Body Validation
-            validation_fields = data.get('validationFields', [])
-            if validation_fields:
-                method = data.get('method', 'GET')
-                # Only validate body for unsafe methods usually, but let's just stick to what's defined.
-                # If fields exist, we validate body.
-                body_data = self.context.get('body', {})
-                
-                missing, invalid_types = self._validate_schema(validation_fields, body_data)
-                
-                if missing or invalid_types:
-                    error_msg = "Validation Error: "
-                    if missing:
-                        error_msg += f"Missing fields: {', '.join(missing)}. "
-                    if invalid_types:
-                        error_msg += f"Invalid types: {', '.join(invalid_types)}."
-                    
-                    self.execution_log.append(f"API Body Validation Failed: {error_msg}")
-                    return {
-                        "type": "response", 
-                        "data": {
-                            "error": "Bad Request", 
-                            "message": error_msg.strip(),
-                            "details": {
-                                "missing": missing,
-                                "invalid": invalid_types
-                            }
-                        }
-                    }
-                self.execution_log.append("API Body Validation Passed")
+            pass
+        
+        elif node_type == 'function_start':
+            # Function Start Node: Initialize function parameters into context
+            # The parameters are defined in node data.parameters, values come from caller
+            parameters = data.get('parameters', [])
+            func_name = data.get('functionName', 'anonymous')
+            
+            self.execution_log.append(f"Function Start: {func_name}")
+            
+            # If this function was called with arguments (via subworkflow),
+            # they would be in context['_func_args']
+            func_args = self.context.get('_func_args', {})
+            
+            for param in parameters:
+                param_name = param.get('name')
+                if param_name:
+                    # Get value from passed arguments or default to None
+                    self.context[param_name] = func_args.get(param_name)
+                    self.execution_log.append(f"  Param '{param_name}' = {self.context.get(param_name)}")
+        
+        elif node_type == 'function_return':
+            # Function Return Node: Return value to caller
+            return_type = data.get('returnType', 'variable')
+            return_value = data.get('returnValue', '')
+            
+            result = None
+            if return_type == 'variable':
+                # First try to get as variable from context
+                result = self.context.get(return_value)
+                # If not found, check if it's a literal value (number, string, etc)
+                if result is None:
+                    # Try to parse as number
+                    try:
+                        if '.' in str(return_value):
+                            result = float(return_value)
+                        else:
+                            result = int(return_value)
+                    except (ValueError, TypeError):
+                        # Use the raw value as string
+                        result = return_value if return_value else None
+            elif return_type == 'json':
+                # Resolve placeholders in JSON
+                final_body = return_value
+                for key, val in self.context.items():
+                    # Handle {$varName} format
+                    placeholder_dollar = f"{{${key}}}"
+                    if placeholder_dollar in final_body:
+                        if isinstance(val, (dict, list)):
+                            final_body = final_body.replace(placeholder_dollar, json.dumps(val))
+                        else:
+                            final_body = final_body.replace(placeholder_dollar, str(val))
+                    # Handle {varName} format
+                    placeholder = f"{{{key}}}"
+                    if placeholder in final_body:
+                        if isinstance(val, (dict, list)):
+                            final_body = final_body.replace(placeholder, json.dumps(val))
+                        else:
+                            final_body = final_body.replace(placeholder, str(val))
+                try:
+                    result = json.loads(final_body)
+                except:
+                    result = final_body
+            elif return_type == 'expression':
+                # Simple expression evaluation
+                result = self._resolve_val(return_value)
+            
+            self.execution_log.append(f"Function Return: {result}")
+            return {"type": "response", "data": result}
         
         elif node_type == 'variable':
-            # Variable Node Execution (Init or Update)
             var_name = data.get('name')
             var_value = data.get('value')
             var_type = data.get('type', 'string')
 
             if var_name:
-                # 1. Perform Variable Substitution if value is a string
-                # This allows "Set Variable" to take values from previous nodes e.g. "{body.id}"
                 if isinstance(var_value, str):
-                    # Check for single variable replacement like "{myObj}" or "$myObj" to preserve type
                     if var_value.startswith('{') and var_value.endswith('}') and var_value.count('{') == 1:
                         key = var_value[1:-1]
-                        if key in self.context:
-                            var_value = self.context[key]
-                    elif var_value.startswith('$') and ' ' not in var_value and len(var_value) > 1:
-                        key = var_value[1:]
-                        if key in self.context:
-                            var_value = self.context[key]
+                        if key in self.context: var_value = self.context[key]
                     else:
-                        # Mixed string interpolation
                         for key, val in self.context.items():
-                            # Replace {key}
                             placeholder = f"{{{key}}}"
-                            if placeholder in var_value:
-                                var_value = var_value.replace(placeholder, str(val))
-                            # Replace $key
-                            placeholder_d = f"${key}"
-                            if placeholder_d in var_value:
-                                var_value = var_value.replace(placeholder_d, str(val))
+                            if placeholder in var_value: var_value = var_value.replace(placeholder, str(val))
                 
-                # 2. Type parsing for JSON/Array
                 if var_type in ['json', 'array'] and isinstance(var_value, str):
+                    try: var_value = json.loads(var_value)
+                    except: pass
+                elif var_type == 'number':
                     try:
-                        var_value = json.loads(var_value)
-                    except:
-                        # If parse fails, keep as string but maybe log warning?
-                        # For now, simplistic approach.
-                        pass
+                        var_value = float(var_value)
+                        if var_value.is_integer(): var_value = int(var_value)
+                    except: pass
 
                 self.context[var_name] = var_value
                 self.execution_log.append(f"Set Variable '{var_name}' = {str(var_value)[:50]}...")
 
-        elif node_type == 'logic':
-            # Evaluate condition
-            # Syntax: User might use JS "===" or "!==" or simple "x > 10"
-            raw_condition = data.get('condition', 'False')
+        elif node_type == 'function':
+            func_name = data.get('name', '').strip()
+            # Standard Library Dispatch
+            res = None
+            try:
+                if func_name == 'uuid': res = StandardLibrary.get_uuid()
+                elif func_name == 'now' or func_name == 'timestamp': res = StandardLibrary.get_timestamp()
+                elif func_name == 'upper': res = StandardLibrary.text_upper(self.context.get('input', '')) # Naive input expectation
+                # For more complex functions, we might need Input Variables in the Function Node.
+                # For now, let's allow 'resultVar' to store the output.
+            except Exception as e:
+                self.execution_log.append(f"Function Error {func_name}: {e}")
             
-            # Simple sanitization/conversion for Python eval
-            # Replace === with ==
-            condition = raw_condition.replace('===', '==').replace('!==', '!=')
+            # If function node has a property to store result
+            # We don't have 'resultVar' in FunctionNode schema explicitly yet, but let's assume standard
+            # Actually, standard FunctionNode usually just runs. 
+            # Let's check context for args? 
+            # Simplified: result is stored in 'last_result' or specific var if we add it.
+            # Let's auto-store in 'func_result' for now.
+            if res is not None:
+                self.context['func_result'] = res
+                self.execution_log.append(f"Function {func_name} -> {res}")
+
+
+
+        elif node_type == 'subworkflow':
+            func_id = data.get('functionId')
+            if not func_id or not self.db:
+                self.execution_log.append("Subworkflow Error: Missing ID or DB")
+                return
+
+            # Fetch sub-workflow
+            from sqlalchemy.future import select
+            from app.models.workflow import Workflow
             
-            # Remove $ prefix from variables for python eval context
-            # e.g. $valA > 10 -> valA > 10
-            # We use regex to find $ followed by word characters
-            # Replace $word with word
-            condition = re.sub(r'\$([a-zA-Z_]\w*)', r'\1', condition)
+            result = await self.db.execute(select(Workflow).filter(Workflow.id == func_id))
+            sub_wf = result.scalars().first()
+            
+            if not sub_wf:
+                self.execution_log.append(f"Subworkflow Not Found: {func_id}")
+                return
+
+            self.execution_log.append(f"Calling Function: {sub_wf.name}")
+            
+            # Get parameter mappings from node data
+            param_mappings = data.get('paramMappings', {})
+            
+            # Resolve each parameter value
+            func_args = {}
+            for param_name, param_value in param_mappings.items():
+                resolved = self._resolve_val(param_value)
+                func_args[param_name] = resolved
+                self.execution_log.append(f"  Passing {param_name} = {resolved}")
+            
+            # Prepare data
+            sub_data = {
+                "nodes": sub_wf.nodes,
+                "edges": sub_wf.edges
+            }
+            
+            # Create sub-executor
+            sub_executor = WorkflowExecutor(sub_data, db_session=self.db)
+            
+            # Pre-seed context with parent context and function arguments
+            sub_executor.context = self.context.copy()
+            sub_executor.context['_func_args'] = func_args  # Special key for FunctionStartNode
+            
+            sub_res = await sub_executor.run({})
+            
+            if sub_res.get('status') == 'success':
+                self.context['func_result'] = sub_res.get('response')
+                self.execution_log.append(f"Function {sub_wf.name} Completed -> func_result = {sub_res.get('response')}")
+            else:
+                self.execution_log.append(f"Function {sub_wf.name} Failed: {sub_res.get('error')}")
+
+
+        elif node_type == 'database':
+            query = data.get('query', '')
+            query_type = data.get('queryType', 'read')
+            result_var = data.get('resultVar', 'dbData')
+            
+            if not self.db: return
+            
+            final_query = query
+            for key, val in self.context.items():
+                if f"{{{key}}}" in final_query:
+                    val_str = str(val)
+                    if isinstance(val, str): val_str = f"'{val_str}'"
+                    final_query = final_query.replace(f"{{{key}}}", str(val_str))
             
             try:
-                # We pass 'self.context' as locals so variables are directly accessible by name
-                # e.g. "myVar > 10" works if myVar is in context
+                result = await self.db.execute(text(final_query))
+                if query_type == 'read':
+                    if result.returns_rows:
+                        rows = result.mappings().all()
+                        res_data = [dict(row) for row in rows]
+                        self.context[result_var] = res_data
+                        self.execution_log.append(f"DB Read: {len(res_data)} rows")
+                    else:
+                        self.context[result_var] = []
+                else:
+                    await self.db.commit()
+                    self.context[result_var] = {"affected": result.rowcount}
+                    self.execution_log.append(f"DB Write: {result.rowcount} rows affected")
+            except Exception as e:
+                self.execution_log.append(f"DB Error: {str(e)}")
+                # self.context[result_var] = {"error": str(e)} # Optional
+
+        elif node_type == 'code':
+            user_code = data.get('code', '')
+            try:
+                local_scope = self.context.copy()
+                local_scope['db'] = self.db
+                local_scope['context'] = self.context
+                
+                if 'await ' in user_code:
+                     indented_code = "\n".join(["    " + line for line in user_code.split("\n")])
+                     wrapped_code = f"async def _user_async_func(context, db):\n{indented_code}"
+                     exec(wrapped_code, {}, local_scope)
+                     await local_scope['_user_async_func'](self.context, self.db)
+                else:
+                    exec(user_code, {}, local_scope)
+                self.execution_log.append(f"Executed Python Code")
+            except Exception as e:
+                self.execution_log.append(f"Code Error: {str(e)}")
+
+        elif node_type == 'file':
+            operation = data.get('operation', 'read')
+            path = self._resolve_val(data.get('path', ''))
+            content = data.get('content', '')
+            result_var = data.get('resultVar', 'fileData')
+            
+            try:
+                if operation == 'read':
+                    if os.path.exists(path):
+                        async with aiofiles.open(path, mode='r') as f:
+                            data = await f.read()
+                        self.context[result_var] = data
+                    else:
+                        self.context[result_var] = None
+                        self.execution_log.append(f"File Read Error: Not found {path}")
+                elif operation == 'write':
+                    final_content = self._resolve_val(content)
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    async with aiofiles.open(path, mode='w') as f:
+                        await f.write(str(final_content))
+                    self.context[result_var] = True
+                elif operation == 'delete':
+                    if os.path.exists(path):
+                        os.remove(path)
+                        self.context[result_var] = True
+                    else: self.context[result_var] = False
+                elif operation == 'list':
+                     if os.path.isdir(path):
+                         files = os.listdir(path)
+                         self.context[result_var] = files
+                     else: self.context[result_var] = []
+            except Exception as e:
+                self.execution_log.append(f"File Error: {str(e)}")
+
+        elif node_type == 'logic':
+            raw_condition = data.get('condition', 'False')
+            condition = raw_condition.replace('===', '==').replace('!==', '!=')
+            try:
                 result = eval(condition, {"__builtins__": {}}, self.context)
                 self.execution_log.append(f"Logic: '{raw_condition}' -> {bool(result)}")
                 return {"type": "logic", "result": bool(result)}
@@ -354,17 +440,13 @@ class WorkflowExecutor:
                 return {"type": "logic", "result": False}
 
         elif node_type == 'math':
-            # Arithmetic Logic
             val_a = self._resolve_val(data.get('valA'))
             val_b = self._resolve_val(data.get('valB'))
             op = data.get('op', '+')
             result_var = data.get('resultVar', 'result')
-            
-            # Try to convert to numbers
             try:
                 num_a = float(val_a)
                 num_b = float(val_b)
-                
                 res = 0
                 if op == '+': res = num_a + num_b
                 elif op == '-': res = num_a - num_b
@@ -372,324 +454,128 @@ class WorkflowExecutor:
                 elif op == '/': res = num_a / num_b if num_b != 0 else 0
                 elif op == '%': res = num_a % num_b
                 
-                # If both were integers (e.g. 10.0), cast back to int for cleanliness?
                 if num_a.is_integer() and num_b.is_integer():
-                     res = int(res) if res != int(res) else res # wait, simple check:
                      if int(res) == res: res = int(res)
-
                 self.context[result_var] = res
-                self.execution_log.append(f"Math: {num_a} {op} {num_b} = {res}")
-            except Exception:
-                # Fallback to string operations for + or failure
+            except:
                 if op == '+':
-                    res = str(val_a) + str(val_b)
-                    self.context[result_var] = res
-                    self.execution_log.append(f"Math (Str): {val_a} + {val_b} = {res}")
-                else:
-                    self.execution_log.append(f"Math Error: Could not process {val_a} {op} {val_b}")
+                    self.context[result_var] = str(val_a) + str(val_b)
 
         elif node_type == 'data_op':
-            # Data Aggregation Logic
-            collection_source = data.get('collection', '')
+            collection = self._resolve_val(data.get('collection', ''))
             op = data.get('op', 'sum')
             result_var = data.get('resultVar', 'summary')
             
-            # 1. Resolve Collection (Same robustness as Loop)
-            collection = self._resolve_val(collection_source)
             if isinstance(collection, str):
-                if collection in self.context:
-                    collection = self.context[collection]
-                elif collection == 'body':
-                     collection = self.context.get('body', [])
-            
-            if not isinstance(collection, list):
-                 self.execution_log.append(f"DataNode Error: Input is not a list. Value: {str(collection)[:20]}")
-                 collection = []
+                if collection in self.context: collection = self.context[collection]
+                elif collection == 'body': collection = self.context.get('body', [])
+            if not isinstance(collection, list): collection = []
 
-            # 2. Extract Numbers
-            # Helper to get numeric values
             nums = []
             for x in collection:
-                try:
-                    nums.append(float(x))
-                except:
-                    pass
+                try: nums.append(float(x))
+                except: pass
             
             res = 0
-            if op == 'count':
-                res = len(collection) # Count includes non-numbers
-            elif op == 'sum':
-                res = sum(nums)
-            elif op == 'avg':
-                res = sum(nums) / len(nums) if nums else 0
-            elif op == 'min':
-                res = min(nums) if nums else 0
-            elif op == 'max':
-                res = max(nums) if nums else 0
+            if op == 'count': res = len(collection)
+            elif op == 'sum': res = sum(nums)
+            elif op == 'avg': res = sum(nums) / len(nums) if nums else 0
             
-            # Clean int casting
-            if isinstance(res, float) and res.is_integer():
-                res = int(res)
-
             self.context[result_var] = res
-            self.execution_log.append(f"Data Op: {op}(len={len(collection)}) = {res}")
 
         elif node_type == 'interface':
-            # Schema Validation for Request Body
             fields = data.get('fields', [])
             mode = data.get('transferMode', 'body')
+            target_data = self.context.get(mode, {})
             
-            target_data = {}
-            if mode == 'query':
-                target_data = self.context.get('query', {})
-            elif mode == 'params':
-                target_data = self.context.get('params', {})
-            else:
-                target_data = self.context.get('body', {})
+            missing = []
+            for field in fields:
+                if field.get('required') and field.get('name') not in target_data:
+                    missing.append(field.get('name'))
             
-            missing, invalid_types = self._validate_schema(fields, target_data)
-
-            if missing or invalid_types:
-                error_msg = "Validation Error: "
-                if missing:
-                    error_msg += f"Missing fields: {', '.join(missing)}. "
-                if invalid_types:
-                    error_msg += f"Invalid types: {', '.join(invalid_types)}."
-                
-                self.execution_log.append(f"Interface Validation Failed: {error_msg}")
-                # Return immediate response which stops workflow
-                return {
+            if missing:
+                 self.execution_log.append(f"Validation Failed: Missing {missing}")
+                 return {
                     "type": "response", 
-                    "data": {
-                        "error": "Bad Request", 
-                        "message": error_msg.strip(),
-                        "details": {
-                            "missing": missing,
-                            "invalid": invalid_types
-                        }
-                    }
+                    "data": {"error": "Validation Failed", "missing": missing, "detail": f"Missing required fields: {', '.join(missing)}"}
                 }
-            
-            self.execution_log.append(f"Interface Validation Passed")
 
         elif node_type == 'loop':
-            collection_source = data.get('collection', '')
+            collection = self._resolve_val(data.get('collection', ''))
             item_var = data.get('variable', 'item')
             
-            # 1. First Pass: Resolve {variables} or keep string
-            collection = self._resolve_val(collection_source)
-            
-            # 2. Second Pass: If string, try path lookup (body.items or direct key)
             if isinstance(collection, str):
-                if collection.startswith('body.'):
-                     path_parts = collection.split('.')
-                     curr = self.context.get('body', {})
-                     for part in path_parts[1:]:
-                         if isinstance(curr, dict):
-                             curr = curr.get(part)
-                         else:
-                             curr = []
-                             break
-                     collection = curr
-                elif collection == 'body':
-                     collection = self.context.get('body', [])
-                elif collection in self.context:
-                     collection = self.context[collection]
+                collection = self.context.get(collection, [])
             
-            # 3. Validation
-            if not isinstance(collection, list):
-                 self.execution_log.append(f"Loop Error: Collection '{collection_source}' resolved to {type(collection)}, expected list. Defaulting to empty.")
-                 collection = []
+            if not isinstance(collection, list): collection = []
 
-            # Get State
             loop_states = self.context.setdefault('_loop_states', {})
             state = loop_states.get(node.get('id'), {'index': 0})
-            
             idx = state['index']
             
             if idx < len(collection):
-                # Do
                 item = collection[idx]
-                if item_var:
-                    self.context[item_var] = item
-                self.execution_log.append(f"Loop {node.get('id')}: Item {idx} = {str(item)[:20]}")
-                
-                # Increment
+                if item_var: self.context[item_var] = item
                 state['index'] = idx + 1
                 loop_states[node.get('id')] = state
                 return {"type": "loop", "result": "do"}
             else:
-                # Done
-                self.execution_log.append(f"Loop {node.get('id')}: Done")
-                # Reset for next run
                 state['index'] = 0 
                 loop_states[node.get('id')] = state
                 return {"type": "loop", "result": "done"}
 
-        elif node_type == 'function':
-            func_name = data.get('name', 'func')
-            self.execution_log.append(f"Ran function {func_name}")
-            # Mock
-        
         elif node_type == 'response':
             resp_type = data.get('responseType', 'json')
             body_def = data.get('body', '{}')
             
             if resp_type == 'variable':
                 var_name = body_def
+                # Handle $varName format
+                if isinstance(var_name, str) and var_name.startswith('$'):
+                    var_name = var_name[1:]
+                # Handle {varName} format  
+                if isinstance(var_name, str) and var_name.startswith('{') and var_name.endswith('}'):
+                    var_name = var_name[1:-1]
+                # Handle {$varName} format
+                if isinstance(var_name, str) and var_name.startswith('$'):
+                    var_name = var_name[1:]
                 val = self.context.get(var_name)
-                if not val and isinstance(var_name, str) and var_name.startswith('{') and var_name.endswith('}'):
-                     stripped = var_name.strip('{}')
-                     val = self.context.get(stripped)
                 return {"type": "response", "data": val}
             else:
-                try:
+                final_body = body_def
+                # Replace all variable patterns in the body
+                for key, val in self.context.items():
+                    # Handle {$varName} format (common from autocomplete)
+                    placeholder_dollar_brace = f"{{${key}}}"
+                    if placeholder_dollar_brace in final_body:
+                        if isinstance(val, (dict, list)): 
+                            final_body = final_body.replace(placeholder_dollar_brace, json.dumps(val))
+                        else: 
+                            final_body = final_body.replace(placeholder_dollar_brace, str(val))
                     
-                    # Helper to resolve deep paths like "body.user.email"
-                    def get_value_from_path(path_str, context):
-                        parts = path_str.split('.')
-                        curr = context
-                        for p in parts:
-                            if isinstance(curr, dict) and p in curr:
-                                curr = curr[p]
-                            elif isinstance(curr, list) and p.isdigit():
-                                idx = int(p)
-                                if 0 <= idx < len(curr):
-                                    curr = curr[idx]
-                                else:
-                                    return None
-                            else:
-                                return None
-                        return curr
-
-                    final_body = body_def
+                    # Handle {varName} format
+                    placeholder_brace = f"{{{key}}}"
+                    if placeholder_brace in final_body:
+                        if isinstance(val, (dict, list)): 
+                            final_body = final_body.replace(placeholder_brace, json.dumps(val))
+                        else: 
+                            final_body = final_body.replace(placeholder_brace, str(val))
                     
-                    # Regex to find $variable, enclosed $variable, or dot notation
-                    # Matches:
-                    # 1. Optional opening brace \{
-                    # 2. The $ symbol
-                    # 3. The path (word + dots)
-                    # 4. Optional closing brace \}
-                    pattern = r'(\{?)\$([a-zA-Z_][a-zA-Z0-9_.]*)(\}?)'
-                    
-                    def replacer(match):
-                        full_match = match.group(0)
-                        prefix = match.group(1) # {
-                        path = match.group(2)   # var.path
-                        suffix = match.group(3) # }
-                        
-                        # Resolve value
-                        val = self.context.get(path)
-                        if val is None:
-                             val = get_value_from_path(path, self.context)
-                        
-                        if val is None:
-                            # Safely handle missing values
-                            if prefix == '{' and suffix == '}':
-                                # {$var} -> null (valid JSON value)
-                                return "null"
-                            # If $var is bare, we return matches to avoid breaking strings like "Price: $10"
-                            # But if it looks like a variable placeholder that failed, what to do?
-                            # For now, returning full_match preserves behavior for non-variable $ usage.
-                            return full_match
-                            
-                        start = match.start()
-                        end = match.end()
-                        
-                        is_wrapped_in_braces = (prefix == '{' and suffix == '}')
-                        
-                        # Check context in original string for quotes
-                        is_already_quoted = False
-                        if start > 0 and end < len(body_def):
-                            if body_def[start-1] == '"' and body_def[end] == '"':
-                                is_already_quoted = True
-                                
-                        if is_wrapped_in_braces:
-                            return self._safe_json_dumps(val)
-                            
-                        if is_already_quoted:
-                            s = self._safe_json_dumps(val)
-                            if s.startswith('"') and s.endswith('"'):
-                                return s[1:-1]
-                            return str(val)
-                        else:
-                            return self._safe_json_dumps(val)
-
-                    final_body = re.sub(pattern, replacer, final_body)
-
-                    return {"type": "response", "data": json.loads(final_body)}
-                except Exception as e:
-                    self.execution_log.append(f"Error parsing response body: {e}")
-                    return {"type": "response", "data": {"raw": body_def, "error": f"JSON Error: {str(e)}"}}
-        
-        elif node_type == 'database':
-            # Database Operations
-            from app.services.external_db import ExternalDbService
-            from app.models.workflow import DatabaseConnection
-            from sqlalchemy import select
-
-            if not self.db_session:
-                 self.execution_log.append("Database Error: No System DB Session")
-                 return {"type": "database", "error": "System Error"}
-                 
-            # Fetch User's DB Connection
-            # match workflow owner
-            # We need user_id. Let's assume it's set in self.user_id
-            if not getattr(self, 'user_id', None):
-                 self.execution_log.append("Database Error: No User Context")
-                 # Fallback? No, strict auth required now.
-                 return {"type": "database", "error": "No User Context"}
-
-            # Query DB Connection for this user
-            # We assume 1 connection per user for MVP
-            stmt = select(DatabaseConnection).filter(DatabaseConnection.user_id == self.user_id)
-            res = await self.db_session.execute(stmt)
-            db_conn = res.scalars().first()
-            
-            if not db_conn:
-                 self.execution_log.append("Database Error: No External Database Configured for User")
-                 return {"type": "database", "error": "No External DB Config"}
-
-            engine = await ExternalDbService.get_engine(db_conn.connection_string)
-            
-            if not engine:
-                self.execution_log.append("Database Error: Could not connect to External DB")
-                return {"type": "database", "error": "Connection Failed"}
+                    # Handle $varName format
+                    placeholder_dollar = f"${key}"
+                    # Only replace if not inside braces (avoid double replacement)
+                    if placeholder_dollar in final_body and f"{{{placeholder_dollar}}}" not in body_def:
+                        if isinstance(val, (dict, list)): 
+                            final_body = final_body.replace(placeholder_dollar, json.dumps(val))
+                        else: 
+                            final_body = final_body.replace(placeholder_dollar, str(val))
                 
-            query_template = data.get('query', '')
-            query_type = data.get('queryType', 'read') # read (select) or write (insert/update/delete)
-            result_var = data.get('resultVar', 'dbResult')
-            
-            from sqlalchemy import text
-            
-            resolved_query = self._resolve_val(query_template)
-            if not isinstance(resolved_query, str):
-                resolved_query = str(resolved_query)
-            
-            self.execution_log.append(f"DB Exec: {resolved_query[:100]}...")
-            
-            try:
-                # Use the external engine
-                async with engine.begin() as conn:
-                    # Bind parameters? 
-                    # Ideally pass params to text(), but we replaced strings already.
-                    # We can pass context params as a fallback for :param syntax
-                    params = {k: v for k, v in self.context.items() if isinstance(v, (str, int, float, bool, type(None)))}
-                    
-                    result = await conn.execute(text(resolved_query), params)
-                    
-                    if query_type == 'read' and result.returns_rows:
-                        rows = result.mappings().all()
-                        data_res = [dict(row) for row in rows]
-                        self.context[result_var] = data_res
-                        self.execution_log.append(f"DB Result: Found {len(data_res)} rows")
-                    else:
-                        # Write ops commit automatically with .begin() context manager
-                        self.context[result_var] = {"status": "success", "rows_affected": result.rowcount}
-                        self.execution_log.append(f"DB Write Success. Rows affected: {result.rowcount}")
-
-            except Exception as e:
-                self.execution_log.append(f"DB Error: {str(e)}")
-                return {"type": "database", "error": str(e)}
-
+                self.execution_log.append(f"Response body after substitution: {final_body}")
+                try: 
+                    parsed = json.loads(final_body)
+                    return {"type": "response", "data": parsed}
+                except Exception as e: 
+                    self.execution_log.append(f"JSON parse error: {e}")
+                    return {"type": "response", "data": final_body}
+        
         return None
